@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "nowshera-2022",
+  "name": "2022 monsoon - Nowshera",
+  "kind": "historical",
+  "outlet": { "station_id": "nowshera", "lat": 34.0095, "lon": 71.978, "crs": "EPSG:4326" },
+  "domain": { "radius_km": 20, "mesh_m": 100, "model_crs": "EPSG:32642", "dem_source": "FABDEM", "dem_sha256": null },
+  "time": { "start": "2022-08-20T00:00:00Z", "end": "2022-09-05T00:00:00Z", "output_interval_minutes": 60 },
+  "forcing": {
+    "mode": "inflow_hydrograph", "rainfall_product": "GPM IMERG", "rainfall_multiplier": 1,
+    "design_storm_mm": null, "return_period_years": null, "bias_correction": "",
+    "soil_moisture": "SMAP", "infiltration": "Green-Ampt", "inflow_asset": null,
+    "upstream_station_ids": ["warsak"], "ffd_class": null
+  },
+  "hydraulics": { "engine": "HEC-RAS 2D", "equations": "full SWE", "manning_source": "ESA WorldCover", "structures": [] },
+  "validation": { "gauge_ids": ["nowshera"], "extent_source": "Sentinel-1", "target_nse": 0.65, "target_kge": 0.6, "target_csi": 0.5 },
+  "provenance": {
+    "created_at": "2026-10-20T00:00:00Z", "purpose": "R&D historical pilot; not a computed or validated event.",
+    "notes": "No discharge or flood depth is bundled. Review all Kabul/Swat tributary inflows, structures and reservoir operations; Warsak alone is not the full inflow.",
+    "sources": ["https://ffd.pmd.gov.pk/flood-limits", "https://global-hydrodynamics.github.io/MERIT_Hydro/"]
+  }
+}

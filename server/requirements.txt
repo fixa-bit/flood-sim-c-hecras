@@ -1,0 +1,11 @@
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+numpy>=2,<3
+rasterio>=1.4,<2
+pyproj>=3.7,<4
+shapely>=2,<3
+h5py>=3.12,<4
+pillow>=11,<14
+httpx>=0.28,<1
+pytest>=8,<10
+ras-commander[compute]>=0.106,<1

@@ -1,0 +1,477 @@
+{
+  "$defs": {
+    "Domain": {
+      "additionalProperties": false,
+      "properties": {
+        "radius_km": {
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Radius Km",
+          "type": "number"
+        },
+        "mesh_m": {
+          "maximum": 1000,
+          "minimum": 10,
+          "title": "Mesh M",
+          "type": "number"
+        },
+        "model_crs": {
+          "enum": [
+            "EPSG:32642",
+            "EPSG:32643"
+          ],
+          "title": "Model Crs",
+          "type": "string"
+        },
+        "dem_source": {
+          "const": "FABDEM",
+          "title": "Dem Source",
+          "type": "string"
+        },
+        "dem_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dem Sha256"
+        }
+      },
+      "required": [
+        "radius_km",
+        "mesh_m",
+        "model_crs",
+        "dem_source",
+        "dem_sha256"
+      ],
+      "title": "Domain",
+      "type": "object"
+    },
+    "Forcing": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "inflow_hydrograph",
+            "rain_on_grid"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "rainfall_product": {
+          "enum": [
+            "GPM IMERG",
+            "CHIRPS",
+            "PMD gauges",
+            "design storm"
+          ],
+          "title": "Rainfall Product",
+          "type": "string"
+        },
+        "rainfall_multiplier": {
+          "exclusiveMinimum": 0,
+          "maximum": 5,
+          "title": "Rainfall Multiplier",
+          "type": "number"
+        },
+        "design_storm_mm": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 3000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Design Storm Mm"
+        },
+        "return_period_years": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Return Period Years"
+        },
+        "bias_correction": {
+          "title": "Bias Correction",
+          "type": "string"
+        },
+        "soil_moisture": {
+          "enum": [
+            "dry",
+            "normal",
+            "saturated",
+            "SMAP"
+          ],
+          "title": "Soil Moisture",
+          "type": "string"
+        },
+        "infiltration": {
+          "enum": [
+            "Green-Ampt",
+            "SCS-CN"
+          ],
+          "title": "Infiltration",
+          "type": "string"
+        },
+        "inflow_asset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inflow Asset"
+        },
+        "upstream_station_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Upstream Station Ids",
+          "type": "array"
+        },
+        "ffd_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "veryHigh",
+                "exceptional"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ffd Class"
+        }
+      },
+      "required": [
+        "mode",
+        "rainfall_product",
+        "rainfall_multiplier",
+        "bias_correction",
+        "soil_moisture",
+        "infiltration",
+        "inflow_asset",
+        "upstream_station_ids",
+        "ffd_class"
+      ],
+      "title": "Forcing",
+      "type": "object"
+    },
+    "Hydraulics": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "enum": [
+            "HEC-RAS 2D",
+            "LISFLOOD-FP"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "equations": {
+          "enum": [
+            "full SWE",
+            "local inertial"
+          ],
+          "title": "Equations",
+          "type": "string"
+        },
+        "manning_source": {
+          "enum": [
+            "ESA WorldCover",
+            "Dynamic World"
+          ],
+          "title": "Manning Source",
+          "type": "string"
+        },
+        "structures": {
+          "items": {
+            "$ref": "#/$defs/Structure"
+          },
+          "title": "Structures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "engine",
+        "equations",
+        "manning_source",
+        "structures"
+      ],
+      "title": "Hydraulics",
+      "type": "object"
+    },
+    "Outlet": {
+      "additionalProperties": false,
+      "properties": {
+        "station_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Station Id"
+        },
+        "lat": {
+          "maximum": 38,
+          "minimum": 23,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 80,
+          "minimum": 60,
+          "title": "Lon",
+          "type": "number"
+        },
+        "crs": {
+          "const": "EPSG:4326",
+          "title": "Crs",
+          "type": "string"
+        }
+      },
+      "required": [
+        "station_id",
+        "lat",
+        "lon",
+        "crs"
+      ],
+      "title": "Outlet",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "created_at",
+        "purpose",
+        "notes",
+        "sources"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "Structure": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "barrage",
+            "levee",
+            "reservoir",
+            "breach"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "specification": {
+          "title": "Specification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "specification"
+      ],
+      "title": "Structure",
+      "type": "object"
+    },
+    "Time": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        },
+        "output_interval_minutes": {
+          "maximum": 1440,
+          "minimum": 1,
+          "title": "Output Interval Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "output_interval_minutes"
+      ],
+      "title": "Time",
+      "type": "object"
+    },
+    "Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "gauge_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Gauge Ids",
+          "type": "array"
+        },
+        "extent_source": {
+          "enum": [
+            "Sentinel-1",
+            "UNOSAT"
+          ],
+          "title": "Extent Source",
+          "type": "string"
+        },
+        "target_nse": {
+          "maximum": 1,
+          "minimum": -10,
+          "title": "Target Nse",
+          "type": "number"
+        },
+        "target_kge": {
+          "maximum": 1,
+          "minimum": -10,
+          "title": "Target Kge",
+          "type": "number"
+        },
+        "target_csi": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Target Csi",
+          "type": "number"
+        }
+      },
+      "required": [
+        "gauge_ids",
+        "extent_source",
+        "target_nse",
+        "target_kge",
+        "target_csi"
+      ],
+      "title": "Validation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "historical",
+        "ffd_class",
+        "design_storm",
+        "soil_state",
+        "reservoir_release",
+        "breach",
+        "land_cover",
+        "climate"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "outlet": {
+      "$ref": "#/$defs/Outlet"
+    },
+    "domain": {
+      "$ref": "#/$defs/Domain"
+    },
+    "time": {
+      "$ref": "#/$defs/Time"
+    },
+    "forcing": {
+      "$ref": "#/$defs/Forcing"
+    },
+    "hydraulics": {
+      "$ref": "#/$defs/Hydraulics"
+    },
+    "validation": {
+      "$ref": "#/$defs/Validation"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "kind",
+    "outlet",
+    "domain",
+    "time",
+    "forcing",
+    "hydraulics",
+    "validation",
+    "provenance"
+  ],
+  "title": "Scenario",
+  "type": "object"
+}

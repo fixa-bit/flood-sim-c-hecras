@@ -1,0 +1,115 @@
+Pakistan flood scenario testing — recommended approach
+R&D only. Do not implement a custom physics engine. Keep hydraulics, hydrology, and animation as three separate systems, then drive the 3D view from georeferenced model output.
+
+Decision
+Build a station-centric scenario lab: any FFD/WAPDA river station (or arbitrary lat/long) snaps to real hydrography, clips FABDEM + soil + rainfall, runs a defendable 2D shallow-water model, and animates those rasters on a WGS84 globe. HEC-RAS 2D is the gold-standard engine. CesiumJS is the viewer. Unreal is optional cinema export only.
+HEC-RAS 2D
+Defendable inundation engine
+FABDEM 30 m
+Default bare-earth terrain
+FFD stations
+Official Pakistan gauge roster
+CesiumJS
+Georeferenced animation
+Why this split
+A cinematic water plane that rises over Cesium terrain is not a flood model. A single 2D SWE run over all of Pakistan at street scale is not computable. Pakistan already operates FEWS, Indus-IFAS/RRI, WRF, and HEC-RAS in FFD; the product should wrap those physics classes, not invent a fourth.
+
+What is defendable
+2D shallow-water equations on a documented DEM, Manning n from land cover, Green-Ampt or SCS-CN infiltration from SoilGrids + SMAP, inflows from gauges or HEC-HMS, and skill scores (NSE/KGE) against FFD discharge plus Sentinel-1 flood extent.
+
+What is not defendable
+Unity/Unreal water actors, height-extruded Cesium polygons, Google Flood Hub virtual gauges as official truth, or rainfall painted as depth. Those may look better and still be wrong.
+
+Pipeline
+Fast screening (LISFLOOD-FP) and gold-standard hydraulics (HEC-RAS 2D) both consume the same hydrology. Animation never computes water.
+
+Pick station
+Snap + delineate
+Assemble rasters
+Scenario file
+Hydrology
+Fast screen
+HEC-RAS 2D
+Validate
+Cesium animate
+Engine choice
+Role	Tool	Physics	Use	License
+Gold inundation
+HEC-RAS 6.x 2D	Full SWE, rain-on-grid, Green-Ampt	Publishable scenarios, breach, barrage	Free, not open source (USACE)
+Catchment runoff
+HEC-HMS	SCS-CN / SMA / snow	Turn rainfall + soil moisture into station inflow	Free (USACE)
+Fast screening
+LISFLOOD-FP	Local inertial SWE	Iterate many scenarios before RAS	Open source
+National context
+GloFAS + Google Flood Hub	Global routing / ML	Context and 7-day outlook, not local maps	Free with attribution
+Rejected as core
+Custom WebGL / Unreal water	Visual only	Cinema after results exist	N/A
+Sources: UK EA 2D hydraulic benchmark; HEC-RAS Mapper HDF5 + RAS Tiles; Copernicus GloFAS; FFD IFAS/FEWS notes; Google Flood Forecasting API.
+
+Data stack for any Pakistan station
+Every run is a clip around a snapped outlet. Do not preload the whole Indus at 30 m into the browser.
+
+Layer	Primary	Fallback / bias-correct	Why
+Stations	FFD/PMD + WAPDA/irrigation discharge	Google Flood Hub (flagged, not official)	Real lat/long, FFD flood classes in lakh cusecs
+Terrain	FABDEM ~30 m	Copernicus GLO-30; local LiDAR for cities	Bare-earth DEM; forests/buildings bias floodplains
+Hydrography	MERIT-Hydro / MERIT-Basins	HydroBASINS, OSM waterways	Snap gauge, delineate catchment, 1D channel skeleton
+Soil	SoilGrids 250 m + Saxton pedotransfer	Soil Survey of Pakistan where available	Ksat, porosity, field capacity for infiltration
+Moisture IC	SMAP / ERA5-Land	Assume dry / normal / saturated scenarios	Initial wetness dominates monsoon runoff
+Rainfall	GPM IMERG (NRT) + CHIRPS (history)	PMD gauges; GFS/ICON/ECMWF for forecast cases	Mountains are uncertain; always bias-correct
+Land cover / n	ESA WorldCover 10 m	Dynamic World	Manning n and urban vs agri floodplain
+Validation	Sentinel-1 GloFAS flood maps, UNOSAT	2010 and 2022 event extents	Prove the animation matches observed water
+Official river stations to seed the catalog
+FFD flood limits (lakh cusecs). App must also accept any lat/long and extra irrigation/nullah gauges.
+
+River	Stations
+Indus	Tarbela, Attock, Kalabagh, Chashma, Taunsa, Guddu, Sukkur, Kotri
+Kabul	Warsak, Nowshera
+Jhelum	Kohala, Mangla, Rasul
+Chenab	Jammu Tawi, Akhnur, Marala, Khanki, Qadirabad, Chiniot, Trimmu, Panjnad
+Ravi	Jassar, Ravi Syphon, Shahdara, Balloki, Sidhnai
+Sutlej	Suleimanki, Islam, G.S. Wala
+Scenario model (first-class object)
+Simulations are not live weather clones. A scenario is a versioned JSON that names the station, domain, forcings, hydraulics options, and success metrics. The same geometry can replay 2010, 2022, a 100-year monsoon, a Tarbela release, or a bund breach.
+
+Scenario fields
+outlet_id / lat-lon, CRS WGS84, DEM source + hash, mesh size, start/end, rainfall product or design storm, soil moisture state, Manning map, inflow hydrograph or rain-on-grid, structures (barrage, levee), output interval, validation gauges.
+
+Scenario library
+Historical replay; FFD Low/Medium/High/Very High/Exceptional discharge at the station; return-period rainfall; saturated soil; reservoir release; embankment breach; land-cover change; climate rainfall multiplier. Always store provenance.
+
+Animation that stays scientific
+HEC-RAS writes cell water surface, depth, and velocity to HDF5. Rasterize those fields to time-stamped GeoTIFF or RAS Tiles. CesiumJS plays them as TimeDynamicImagery on quantized-mesh terrain built from the same FABDEM clip. Clock, legend, and hydrograph stay locked to model time.
+
+Interactive app
+CesiumJS + Cesium World Terrain, overlay local FABDEM, depth colormap, velocity particles, FFD station markers, scenario compare A/B.
+
+Cinema (optional)
+Cesium for Unreal only after RAS results exist. Water mesh samples the same depth rasters. Never simulate in Unreal.
+
+Forbidden
+ExtrudedHeight flood polygons, fake rain shaders, and unbounded global water planes that ignore the DEM and the hydrograph.
+
+Product architecture (later build)
+Layer	Responsibility
+Web app	Station picker, scenario editor, 3D globe, hydrographs, uncertainty band, export report
+Data service	Station registry, GEE/STAC clipper for DEM/soil/rain/land cover, cache tiles by hash
+Hydrology worker	HEC-HMS or Green-Ampt rain-on-grid prep; SMAP ICs; design storms
+Hydraulic worker	Windows HEC-RAS 6 compute via ras-commander; LISFLOOD-FP screening
+Publish	HDF5 → COG/tiles + metadata JSON; Cesium ion or self-hosted terrain
+Phasing (implementation later)
+Phase	Outcome	Defendability
+0 Catalog
+FFD station lat/long, flood classes, MERIT snap, data licenses	Can cite sources
+1 Domain builder
+Any station → catchment + FABDEM clip on Cesium globe	Real terrain, not yet physics
+2 Hydrology + scenarios
+Rain, soil, moisture → inflow; JSON scenario library	Runoff is documented
+3 HEC-RAS 2D
+Unsteady inundation, HDF5, gauge NSE vs FFD	Publishable hydraulics
+4 Animation + QA
+Time-dynamic Cesium, Sentinel-1 overlay, 2010/2022 replay	Picture matches physics
+What not to reuse as the core
+FFD 3D river-state map is a monitoring product, not an inundation model. Indus-IFAS/RRI is useful as an operational reference and calibration target, not something to reimplement. Google Flood Hub is excellent context (~2,391 virtual gauges) but its virtual series must be labelled estimates. Bentley OpenFlows and MIKE are capable and expensive; they are optional later, not required to start.
+
+Scope guard
+First implementation must prove one station end-to-end (recommend Sukkur or Nowshera) with a 2022 historical scenario before opening “any river station of Pakistan” in the UI.
