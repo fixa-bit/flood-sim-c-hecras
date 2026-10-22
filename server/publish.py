@@ -106,7 +106,7 @@ def publish(manifest_path: Path):
                 name = f"{index:05d}-{field}"
                 bounds = raster_overlay(source, folder / f"{name}.png", field)
                 shutil.copy2(source, folder / f"{name}.tif")
-                item["fields"][field] = {"url": f"/outputs/{result_id}/{name}.png", "raster_url": f"/outputs/{result_id}/{name}.tif", "bounds": bounds, "sha256": file_hash(source)}
+                item["fields"][field] = {"url": f"/outputs/{result_id}/{name}.png", "raster_url": f"/outputs/{result_id}/{name}.tif", "bounds": bounds, "sha256": file_hash(source), "overlay_sha256": file_hash(folder / f"{name}.png")}
             output_frames.append(item)
         hydrographs = read_hydrographs(base / config["gauges_csv"]) if config.get("gauges_csv") else []
         for graph in hydrographs:

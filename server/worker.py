@@ -1,4 +1,4 @@
-"""Execute only externally prepared, hash-bound models. No generated hydraulics."""
+"""Execute hash-bound external engine projects; never generate water in Python."""
 import importlib.util
 import os
 from pathlib import Path
@@ -53,12 +53,16 @@ def preflight(s: Scenario):
         covered = all(station in coverage and datetime.fromisoformat(coverage[station][0]) <= s.time.start and datetime.fromisoformat(coverage[station][1]) >= s.time.end for station in selected)
         add("boundary_coverage", covered, "Every selected inflow boundary must cover the full model time window in m³/s; contributing lateral inflows remain part of the model review.")
     add("bias_correction", s.forcing.bias_correction.strip(), "Document rainfall bias correction, or explain why rainfall is unused for a gauge-driven run.")
+    if s.forcing.inflow_asset:
+        add("inflow_hash", assets().get("inflow", {}).get("sha256") == s.forcing.inflow_asset, "The selected inflow SHA-256 must match the registered boundary file.")
     add("structures", all(item.specification.strip() for item in s.hydraulics.structures), "Structures need geometry, operation and breach/release timing in the prepared model.")
     if s.kind == "design_storm":
         add("idf", "idf" in s.provenance.notes.lower(), "Document the local IDF source and design hyetograph; an entered return period is not evidence.")
     binding = read_json(ROOT / "bindings" / f"{digest}.json")
     add("prepared_model", binding, "Bind a reviewed, scenario-specific engine project with `python -m server.cli bind`. Edits invalidate this binding.")
     if binding:
+        if binding.get("asset_hashes") is not None:
+            add("model_assets", all(assets().get(key, {}).get("sha256") == digest for key, digest in binding["asset_hashes"].items()), "Registered model inputs must match the prepared project's source hashes.")
         for item in binding["files"]:
             path = Path(binding["project"]) / item["path"]
             add(f"model:{item['path']}", path.is_file() and file_hash(path) == item["sha256"], "Prepared model input hash must match its binding.")
@@ -67,6 +71,11 @@ def preflight(s: Scenario):
         add("runtime", runtime["hec_ras"] and runtime["ras_commander"], "Installed HEC-RAS and ras-commander[compute] are required.")
     else:
         add("runtime", runtime["lisflood_fp"], "Set LISFLOOD_FP_EXE to a locally installed LISFLOOD-FP executable.")
+        if binding and (Path(binding["project"]) / "screening.json").is_file():
+            config = read_json(Path(binding["project"]) / "screening.json")
+            from .screening import FORMAT
+            add("screening_format", config.get("format") == FORMAT, "Use the current prepared public case with channel conditioning, river warm-up and a complete discharge cross-section; earlier preparation versions are superseded.")
+            add("screening_engine", runtime["lisflood_fp"] and file_hash(Path(runtime["lisflood_fp_exe"])) == config.get("engine_sha256"), "Exploratory screening requires the exact engine build recorded in its preparation review.")
     return {"scenario_sha256": digest, "ready": all(c["passed"] for c in checks), "checks": checks}
 
 
@@ -93,7 +102,8 @@ def bind(s: Scenario, project: Path, plan: str, review: str):
             files.append({"path": path.relative_to(project).as_posix(), "sha256": file_hash(path)})
     if not files or s.hydraulics.engine == "HEC-RAS 2D" and not list(project.glob(f"*.p{plan}")):
         raise ValueError("Prepared project is empty or the requested RAS plan is missing.")
-    value = {"scenario_sha256": scenario_hash(s), "project": str(project), "plan": plan, "review": review, "files": files, "engine": s.hydraulics.engine}
+    value = {"scenario_sha256": scenario_hash(s), "project": str(project), "plan": plan, "review": review, "files": files, "engine": s.hydraulics.engine,
+             "asset_hashes": {key: value["sha256"] for key, value in assets().items() if key != "validation"}}
     write_json(ROOT / "bindings" / f"{scenario_hash(s)}.json", value)
     return value
 
@@ -106,6 +116,14 @@ def execute(s: Scenario, job_id: str):
         if not check["ready"]:
             raise ValueError("Preflight failed. Prepare the missing data and model inputs first.")
         binding = read_json(ROOT / "bindings" / f"{scenario_hash(s)}.json")
+        screening = Path(binding["project"]) / "screening.json"
+        if s.hydraulics.engine == "LISFLOOD-FP" and screening.is_file():
+            from .screening import cached_result
+            cached = cached_result(s)
+            if cached:
+                write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": cached["id"],
+                    "detail": "Loaded the verified output of this exact prepared case. Exploratory and uncalibrated."})
+                return
         write_json(status_path, {"id": job_id, "state": "running", "scenario_sha256": scenario_hash(s)})
         project = folder / "model"
         shutil.copytree(binding["project"], project)
@@ -121,7 +139,14 @@ def execute(s: Scenario, job_id: str):
             if not parameter.resolve().is_relative_to(project.resolve()) or not parameter.is_file():
                 raise ValueError("LISFLOOD parameter file must be inside the prepared project.")
             with (folder / "engine.log").open("w", encoding="utf-8") as log:
-                subprocess.run([runtimes()["lisflood_fp_exe"], str(parameter)], cwd=project, check=True, timeout=86400, stdout=log, stderr=subprocess.STDOUT)
+                subprocess.run([runtimes()["lisflood_fp_exe"], str(parameter)], cwd=project, check=True, timeout=86400, stdout=log, stderr=subprocess.STDOUT,
+                               env={**os.environ, "OMP_NUM_THREADS": "2"}, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            if (project / "screening.json").is_file():
+                from .screening import finish_and_publish
+                result = finish_and_publish(s, project)
+                write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": result["id"],
+                    "detail": "External engine completed; numerical checks passed and timestamped output is available. Exploratory and uncalibrated."})
+                return
         write_json(status_path, {"id": job_id, "state": "computed", "scenario_sha256": scenario_hash(s),
                                  "detail": "Engine compute finished. Export and publish timestamped model rasters before playback; model review is required."})
     except Exception as exc:

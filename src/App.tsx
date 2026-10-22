@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { STATIONS, STATION_BY_ID } from "./data/stations";
 import {
   downstreamOf,
@@ -19,9 +19,19 @@ import { SOURCES } from "./data/sources";
 import { EXAMPLE_SCENARIOS, exampleScenario } from "./data/examples";
 import type { ExampleId } from "./data/examples";
 import { api, download } from "./lib/api";
-import type { Asset, DomainResult, Health, Preflight, Result } from "./lib/api";
+import type {
+  Asset,
+  DomainResult,
+  Health,
+  Preflight,
+  PreparedCase,
+  Result,
+} from "./lib/api";
 import { Hydrograph } from "./components/Hydrograph";
 import { StudyPanel } from "./components/StudyPanel";
+import { ScenarioCaseRunner } from "./components/ScenarioCaseRunner";
+import type { CaseOutcome } from "./components/ScenarioCaseRunner";
+import { scenarioCaseValues } from "./lib/scenarioCase";
 import "./App.css";
 
 const Globe = lazy(() => import("./components/Globe"));
@@ -64,6 +74,7 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [assets, setAssets] = useState<Record<string, Asset>>({});
   const [results, setResults] = useState<Result[]>([]);
+  const [preparedCases, setPreparedCases] = useState<PreparedCase[]>([]);
   const [resultId, setResultId] = useState("");
   const [compareId, setCompareId] = useState("");
   const [domain, setDomain] = useState<DomainResult>();
@@ -71,6 +82,7 @@ function App() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
+  const [caseOutcome, setCaseOutcome] = useState<CaseOutcome>();
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [field, setField] = useState<"depth" | "wse" | "velocity">("depth");
@@ -86,10 +98,36 @@ function App() {
     id: string;
     state: string;
     detail?: string;
+    result_id?: string;
   }>();
+  const jobId = job?.id;
+  const jobState = job?.state;
   const fileInput = useRef<HTMLInputElement>(null);
   const scenarioRef = useRef(scenario);
   scenarioRef.current = scenario;
+  const exampleCases = useMemo(
+    () =>
+      EXAMPLE_SCENARIOS.map((item) => ({
+        key: `example:${item.id}`,
+        label: `Example · ${item.title}`,
+        scenario: exampleScenario(item.id, assets.dem?.sha256 ?? null),
+      })),
+    [assets.dem?.sha256],
+  );
+  const scenarioCases = [
+    { key: "current", label: `Current · ${scenario.name}`, scenario },
+    ...exampleCases,
+    ...preparedCases.map((item) => ({
+      key: `prepared:${item.scenario.id}`,
+      label: item.label,
+      scenario: item.scenario,
+    })),
+    ...library.map((saved) => ({
+      key: `saved:${saved.id}`,
+      label: `Saved · ${saved.name}`,
+      scenario: saved,
+    })),
+  ];
   const station = scenario.outlet.station_id
     ? STATION_BY_ID[scenario.outlet.station_id]
     : undefined;
@@ -160,28 +198,70 @@ function App() {
     return () => clearInterval(timer);
   }, [playing, result]);
   useEffect(() => {
-    if (!job || !["queued", "running"].includes(job.state)) return;
-    const timer = setInterval(() => {
-      void api<typeof job>(`jobs/${job.id}`)
-        .then(setJob)
-        .catch((e) => setMessage(e.message));
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [job]);
+    if (!jobId || !jobState || !["queued", "running"].includes(jobState))
+      return;
+    let active = true;
+    const poll = () => {
+      void api<NonNullable<typeof job>>(`jobs/${jobId}`)
+        .then((next) => {
+          if (active) setJob(next);
+        })
+        .catch((e) => {
+          if (active) setMessage(e.message);
+        });
+    };
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [jobId, jobState]);
   useEffect(() => {
     void refresh();
   }, []);
+  useEffect(() => {
+    if (job?.state !== "published" || !job.result_id) return;
+    let active = true;
+    void api<Result[]>("results")
+      .then((published) => {
+        if (!active) return;
+        setResults(published);
+        const output = published.find((item) => item.id === job.result_id);
+        if (
+          output &&
+          JSON.stringify(output.scenario) ===
+            JSON.stringify(scenarioRef.current)
+        ) {
+          setResultId(output.id);
+          setFrameIndex(0);
+          setField("depth");
+          setPlaying(false);
+          setView("results");
+          setCaseOutcome({
+            state: "loaded",
+            text: "Computed output loaded. Press Play below the map. This public-data screening is exploratory and uncalibrated.",
+          });
+        }
+      })
+      .catch((error) => setMessage(error.message));
+    return () => {
+      active = false;
+    };
+  }, [job?.state, job?.result_id]);
 
   async function refresh() {
     try {
-      const [h, a, r] = await Promise.all([
+      const [h, a, r, prepared] = await Promise.all([
         api<Health>("health"),
         api<Record<string, Asset>>("assets"),
         api<Result[]>("results"),
+        api<PreparedCase[]>("prepared-cases").catch(() => []),
       ]);
       setHealth(h);
       setAssets(a);
       setResults(r);
+      setPreparedCases(prepared);
       if (a.dem)
         setScenario((s) =>
           s.domain.dem_sha256 === a.dem.sha256
@@ -193,10 +273,12 @@ function App() {
     }
   }
   const update = (next: Scenario) => {
+    scenarioRef.current = next;
     setScenario(next);
     setView("planning");
     setMessage("");
     setNotice("");
+    setCaseOutcome(undefined);
   };
   function selectStation(id: string) {
     const s = defaultScenarioFor(STATION_BY_ID[id]);
@@ -252,6 +334,86 @@ function App() {
       const valid = await api<Scenario>("scenarios/validate", value);
       update(valid);
       setNotice("Scenario imported and validated against schema version 1.");
+    });
+  }
+  async function applyScenarioCase(
+    base: Scenario,
+    values: string,
+    run: boolean,
+  ) {
+    await action(run ? "Case run" : "Case load", async () => {
+      try {
+        const previous = scenarioRef.current;
+        const candidate = scenarioCaseValues(
+          values,
+          base,
+          assets.dem?.sha256 ?? null,
+        );
+        const valid = await api<Scenario>("scenarios/validate", candidate);
+        if (previous !== scenarioRef.current)
+          throw new Error(
+            "The scenario changed while loading. Apply the case again to continue.",
+          );
+        update(valid);
+        setFrameIndex(0);
+        setTab("scenario");
+        if (!run) {
+          setCaseOutcome({
+            state: "loaded",
+            text: "Case values loaded into the editor. Choose Prepare & run case when ready.",
+          });
+          return;
+        }
+        let prepared: DomainResult | undefined;
+        let preparationError: string | undefined;
+        try {
+          prepared = await api<DomainResult>("domain", valid);
+        } catch (error) {
+          preparationError =
+            error instanceof Error
+              ? error.message
+              : "Domain preparation failed.";
+        }
+        if (valid !== scenarioRef.current)
+          throw new Error(
+            "The scenario changed during preparation. Prepare the updated case again.",
+          );
+        if (prepared) setDomain(prepared);
+        const check = await api<Preflight>("preflight", valid);
+        if (valid !== scenarioRef.current)
+          throw new Error(
+            "The scenario changed during readiness checks. Prepare the updated case again.",
+          );
+        setPreflight(check);
+        if (!check.ready || !prepared) {
+          const issues = check.checks
+            .filter((item) => !item.passed)
+            .map((item) => item.detail);
+          if (preparationError)
+            issues.unshift(`Domain preparation: ${preparationError}`);
+          setCaseOutcome({
+            state: "blocked",
+            text: "Case loaded. Simulation needs the following inputs:",
+            issues,
+          });
+          return;
+        }
+        const submitted = await api<NonNullable<typeof job>>("jobs", valid);
+        setJob(submitted);
+        setCaseOutcome({
+          state: "submitted",
+          text: "Case submitted to the hydraulic model. Track its status in the scenario editor.",
+        });
+      } catch (error) {
+        setCaseOutcome({
+          state: "error",
+          text:
+            error instanceof Error
+              ? error.message
+              : "Could not apply the scenario case.",
+        });
+        throw error;
+      }
     });
   }
   function report() {
@@ -501,6 +663,19 @@ function App() {
                   ))}
                 </div>
               </section>
+              <ScenarioCaseRunner
+                cases={scenarioCases}
+                connected={!!health}
+                busy={
+                  busy ||
+                  (["queued", "running"].includes(job?.state ?? "")
+                    ? "Model running"
+                    : "")
+                }
+                outcome={caseOutcome}
+                onChange={() => setCaseOutcome(undefined)}
+                onApply={applyScenarioCase}
+              />
               <div className="map-toolbar">
                 <div className="segmented">
                   <button
@@ -1332,7 +1507,11 @@ function App() {
                       }
                     />
                     {STATION_BY_ID[id]?.name ??
-                      (id === "charsadda-road" ? "Charsadda Road (Swat)" : id)}
+                      (id === "charsadda-road"
+                        ? "Charsadda Road (Swat)"
+                        : id === "nowshera-hms"
+                          ? "Modeled Kabul inflow (HEC-HMS)"
+                          : id)}
                   </label>
                 ))
               ) : (

@@ -103,6 +103,7 @@ test("mobile workspace fits without page overflow", async ({ page }) => {
     viewport: innerWidth,
   }));
   expect(widths.scroll).toBeLessThanOrEqual(widths.viewport);
+  await page.locator(".globe-shell").scrollIntoViewIfNeeded();
   await expect(page.locator(".globe canvas")).toBeVisible({ timeout: 30000 });
   await expect(page.locator(".globe")).toHaveAttribute(
     "data-tiles-ready",

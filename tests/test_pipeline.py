@@ -151,6 +151,22 @@ def test_model_binding_and_changed_file(isolated, scenario, monkeypatch):
     assert not next(c for c in worker.preflight(s)["checks"] if c["key"] == "prepared_model")["passed"]
 
 
+def test_changed_registered_inflow_invalidates_model_binding(isolated, scenario, monkeypatch):
+    s = seed(isolated, scenario)
+    domain.prepare_domain(s)
+    project = isolated / "input-hash-test"
+    project.mkdir()
+    (project / "test.p01").write_text("isolated input-binding fixture")
+    worker.bind(s, project, "01", "Isolated source dependency test")
+    monkeypatch.setattr(worker, "runtimes", lambda: {"hec_ras": True, "ras_commander": True})
+    changed = isolated / "changed-inflow.csv"
+    changed.write_text("time,station_id,discharge_m3s,source,value_type\n2022-08-20T00:00:00Z,warsak,200,test,modeled\n2022-09-05T00:00:00Z,warsak,200,test,modeled\n")
+    cli.register("inflow", changed, "isolated changed input", "test only", "test flow")
+    check = worker.preflight(s)
+    assert not check["ready"]
+    assert not next(item for item in check["checks"] if item["key"] == "model_assets")["passed"]
+
+
 def export_manifest(root, s):
     prepared = domain.prepare_domain(s)
     path = raster(root / "depth.tif", values=np.full((100, 100), 1.5))

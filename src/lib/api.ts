@@ -51,6 +51,12 @@ export type Asset = {
   product: string;
   acquisition?: { notes?: string };
 };
+export type PreparedCase = {
+  label: string;
+  scenario: Scenario;
+  limitations: string[];
+  ready: boolean;
+};
 export type Preflight = {
   ready: boolean;
   scenario_sha256: string;
@@ -100,7 +106,14 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
       typeof detail === "string"
         ? detail
         : Array.isArray(detail)
-          ? detail.map((item: { msg: string }) => item.msg).join("; ")
+          ? detail
+              .map((item: { msg: string; loc?: (string | number)[] }) => {
+                const path = item.loc
+                  ?.filter((part) => part !== "body")
+                  .join(".");
+                return path ? `${path}: ${item.msg}` : item.msg;
+              })
+              .join("; ")
           : "Request could not be completed. Check the preparation requirements.",
     );
   }

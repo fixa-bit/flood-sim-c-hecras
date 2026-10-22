@@ -105,7 +105,13 @@ def domain(scenario: Scenario):
 
 @app.get("/api/results")
 def results():
-    return [read_json(path) for path in sorted((ROOT / "results").glob("*/manifest.json"))]
+    return [result for path in sorted((ROOT / "results").glob("*/manifest.json")) if not (result := read_json(path)).get("superseded_by")]
+
+
+@app.get("/api/prepared-cases")
+def list_prepared_cases():
+    from .screening import prepared_cases
+    return prepared_cases()
 
 
 def background_compute(scenario, job_id):
@@ -120,6 +126,20 @@ def create_job(scenario: Scenario, background_tasks: BackgroundTasks):
     check = preflight(scenario)
     if not check["ready"]:
         raise HTTPException(409, check)
+    binding = read_json(ROOT / "bindings" / f"{check['scenario_sha256']}.json", {})
+    if scenario.hydraulics.engine == "LISFLOOD-FP" and (Path(binding.get("project", "")) / "screening.json").is_file():
+        from .screening import cached_result
+        try:
+            cached = cached_result(scenario)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if cached:
+            job_id = uuid4().hex
+            job = {"id": job_id, "state": "published", "scenario_sha256": check["scenario_sha256"], "result_id": cached["id"],
+                   "detail": "Loaded the verified output of this exact prepared case. Exploratory and uncalibrated."}
+            write_json(ROOT / "jobs" / job_id / "status.json", job)
+            write_json(ROOT / "jobs" / job_id / "scenario.json", scenario.model_dump(mode="json"))
+            return job
     if not compute_lock.acquire(blocking=False):
         raise HTTPException(409, "A model is already computing in this local worker.")
     job_id = uuid4().hex

@@ -424,7 +424,112 @@
   color: #9de6cf;
   text-align: left;
 }
+.scenario-case-runner {
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid #38564f;
+  border-radius: 8px;
+  background: #142a2c;
+  min-width: 0;
+}
+.scenario-case-runner .section-title {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.case-description {
+  color: #b0c6c9;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+.case-source-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.case-ready {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+.case-ready span {
+  color: #a4c6bb;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.case-source-row label {
+  flex: 1;
+  min-width: 0;
+}
+.case-source-row button {
+  flex-shrink: 0;
+}
+.scenario-case-runner details {
+  margin-top: 14px;
+}
+.scenario-case-runner summary {
+  cursor: pointer;
+  color: #9de6cf;
+  font-size: 11px;
+  padding: 4px 0;
+}
+.scenario-case-runner details label {
+  margin-top: 10px;
+}
+.scenario-case-runner textarea {
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+.case-help,
+.case-file-name {
+  margin-top: 10px;
+  font-size: 10px;
+  color: #93afb3;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.case-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.case-outcome {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #4a6b61;
+  border-radius: 5px;
+  color: #b9e4d3;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.case-outcome strong {
+  font-weight: 500;
+}
+.case-outcome.blocked {
+  border-color: #756947;
+  color: #ddcda3;
+}
+.case-outcome.error {
+  border-color: #8a5551;
+  color: #f0b8af;
+}
+.case-outcome ul {
+  margin: 8px 0 0;
+  padding-left: 17px;
+}
 @media (max-width: 600px) {
+  .case-source-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .case-actions button {
+    flex: 1 1 100%;
+  }
   .example-grid {
     grid-template-columns: 1fr;
   }

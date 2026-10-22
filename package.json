@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "playwright test"
+    "test": "node scripts/test-browser.mjs"
   },
   "dependencies": {
     "cesium": "^1.146.0",

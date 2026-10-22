@@ -37,7 +37,7 @@ Further progress: the [upstream study](STUDY_PROGRESS.md) has actually computed 
 
 ## Verification
 
-The [verification record](VERIFICATION.md) lists 28 passing backend tests, browser checks, actual downloaded-file verification, the successful build and engine installation/execution evidence. It also records the real HEC-HMS compute and failed held-out routing target.
+The [verification record](VERIFICATION.md) lists 41 passing backend tests, including six channel/initialization checks, browser checks, actual downloaded-file verification, the successful build and engine execution evidence. It records the real HEC-HMS compute and failed held-out routing target, plus a separate uncalibrated [LISFLOOD-FP public screening case](SCREENING_MODEL.md). The revised case uses a 100 m mapped channel with explicitly estimated bed depths and a converged 72-hour river warm-up excluded from playback. Surveyed geometry, accepted calibration and independent flood extent remain open.
 
 - `npm run build` checks TypeScript and produces a static app with Cesium resources.
 - `python -m pytest tests/test_pipeline.py` tests bounded clipping, source hashes, snapping, model bindings, output publication, scientific scores and API gating with **synthetic test fixtures**.

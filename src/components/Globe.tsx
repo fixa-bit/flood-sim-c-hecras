@@ -67,11 +67,14 @@ export default function Globe({
   const [split, setSplit] = useState(50);
   const [flat, setFlat] = useState(false);
   const [aerial, setAerial] = useState(true);
+  const [basemapFallback, setBasemapFallback] = useState(false);
   const [riverContext, setRiverContext] = useState<RiverContext>();
   const [riverView, setRiverView] = useState(true);
   const [showRivers, setShowRivers] = useState(false);
+  const [showBasin, setShowBasin] = useState(false);
   const [cameraRevision, setCameraRevision] = useState(0);
   const aerialLayer = useRef<ImageryLayer | null>(null);
+  const streetLayer = useRef<ImageryLayer | null>(null);
   const aerialChoice = useRef(aerial);
   aerialChoice.current = aerial;
   select.current = onStation;
@@ -140,7 +143,8 @@ export default function Globe({
         ),
         maximumLevel: 19,
       });
-      v.imageryLayers.addImageryProvider(detail);
+      streetLayer.current = v.imageryLayers.addImageryProvider(detail);
+      streetLayer.current.show = !aerialChoice.current;
       const photo = new UrlTemplateImageryProvider({
         url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         maximumLevel: 19,
@@ -227,7 +231,8 @@ export default function Globe({
                 true,
               ),
             });
-            provider.getTileDataAvailable = (_x, _y, level) => level <= meta.maximum_level;
+            provider.getTileDataAvailable = (_x, _y, level) =>
+              level <= meta.maximum_level;
             provider.requestTileGeometry = (x, y, level) =>
               heights(x, y, level).then(
                 (buffer) =>
@@ -289,6 +294,7 @@ export default function Globe({
       clearInterval(loadingFrames);
       viewer.current = null;
       aerialLayer.current = null;
+      streetLayer.current = null;
       if (v && !v.isDestroyed()) v.destroy();
     };
   }, []);
@@ -330,13 +336,38 @@ export default function Globe({
   }, [ready, riverContext, showRivers]);
 
   useEffect(() => {
-    if (aerialLayer.current) aerialLayer.current.show = aerial;
+    if (aerialLayer.current)
+      aerialLayer.current.show = aerial && !basemapFallback;
+    if (streetLayer.current)
+      streetLayer.current.show = !aerial && !basemapFallback;
     viewer.current?.scene.requestRender();
-  }, [aerial]);
+    const v = viewer.current;
+    if (!ready || !v || basemapFallback) return;
+    let waitingSince: number | undefined;
+    // A new case or camera position can stall imagery after the first load.
+    // Watch every loading period, including the Run → results transition.
+    const timer = setInterval(() => {
+      if (v.isDestroyed()) return;
+      if (v.scene.globe.tilesLoaded) {
+        waitingSince = undefined;
+        return;
+      }
+      waitingSince ??= performance.now();
+      if (performance.now() - waitingSince >= 10000) {
+        setBasemapFallback(true);
+        setError(
+          "Online imagery is slow. Showing bundled context with local terrain and computed water; select Satellite to retry.",
+        );
+        v.scene.requestRender();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [aerial, basemapFallback, ready]);
 
   useEffect(() => {
     const v = viewer.current;
     if (!ready || !v) return;
+    v.camera.cancelFlight();
     const [west, south, east, north] = boundsFor(scenario);
     v.entities.removeById("analysis-domain");
     v.entities.removeById("custom-outlet");
@@ -406,7 +437,10 @@ export default function Globe({
 
   useEffect(() => {
     const v = viewer.current;
-    if (!ready || !v || !domain?.catchment) return;
+    // The full upstream basin is much larger than the hydraulic reach. Loading
+    // its ground-clamped geometry during every prepare/run handoff can queue
+    // terrain work across the whole basin. Draw it only when requested.
+    if (!ready || !v || !domain?.catchment || !showBasin) return;
     let stopped = false;
     let source: GeoJsonDataSource | undefined;
     GeoJsonDataSource.load(domain.catchment, {
@@ -427,7 +461,7 @@ export default function Globe({
       stopped = true;
       if (source && !v.isDestroyed()) v.dataSources.remove(source, true);
     };
-  }, [ready, domain]);
+  }, [ready, domain, showBasin]);
 
   useEffect(() => {
     const v = viewer.current;
@@ -531,12 +565,33 @@ export default function Globe({
         >
           Domain overview
         </button>
-        <button onClick={() => setAerial(!aerial)}>
-          {aerial ? "Map" : "Satellite"}
+        <button
+          onClick={() => {
+            if (basemapFallback) {
+              setBasemapFallback(false);
+              setAerial(true);
+            } else setAerial(!aerial);
+            if (error.startsWith("Online imagery is slow")) setError("");
+          }}
+        >
+          {basemapFallback ? "Satellite" : aerial ? "Map" : "Satellite"}
         </button>
-        <button aria-pressed={showRivers} className={showRivers ? "active" : ""} onClick={() => setShowRivers(!showRivers)}>
+        <button
+          aria-pressed={showRivers}
+          className={showRivers ? "active" : ""}
+          onClick={() => setShowRivers(!showRivers)}
+        >
           River lines
         </button>
+        {domain?.catchment && (
+          <button
+            aria-pressed={showBasin}
+            className={showBasin ? "active" : ""}
+            onClick={() => setShowBasin(!showBasin)}
+          >
+            Basin outline
+          </button>
+        )}
       </div>
       {error && (
         <p className="map-error" role="status">
@@ -546,7 +601,9 @@ export default function Globe({
       <div className="map-caption">
         <span className="outline-key" /> Analysis boundary <span>·</span>{" "}
         {domain
-          ? "Supplied basin outlined separately"
+          ? showBasin
+            ? "Supplied basin outlined separately"
+            : "Supplied basin available · outline off"
           : "Catchment not yet delineated"}
         <small>
           {riverView && riverContext?.focus
