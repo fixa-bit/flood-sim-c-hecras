@@ -1,0 +1,4 @@
+# Build the exploratory HEC-RAS 2D case using installed USACE native tools.
+-r requirements-data.txt
+pythonnet>=3.2,<4
+geopandas>=1.2,<2

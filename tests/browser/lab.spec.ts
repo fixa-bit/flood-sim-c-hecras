@@ -103,6 +103,7 @@ test("mobile workspace fits without page overflow", async ({ page }) => {
     viewport: innerWidth,
   }));
   expect(widths.scroll).toBeLessThanOrEqual(widths.viewport);
+  await page.locator(".globe-shell").scrollIntoViewIfNeeded();
   await expect(page.locator(".globe canvas")).toBeVisible({ timeout: 30000 });
   await expect(page.locator(".globe")).toHaveAttribute(
     "data-tiles-ready",
@@ -144,7 +145,10 @@ test("published output plays on model time and compares only exact timestamps", 
   const b = {
     ...base,
     id: "test-b",
-    frames: [{ time: "2022-08-20T01:00:00Z", fields: { depth: overlay } }],
+    frames: [
+      { time: "2022-08-20T00:00:04.594Z", fields: { depth: overlay } },
+      { time: "2022-08-20T01:00:00Z", fields: { depth: overlay } },
+    ],
   };
   await page.route("**/api/results", (route) =>
     route.fulfill({ json: [a, b] }),
@@ -156,6 +160,22 @@ test("published output plays on model time and compares only exact timestamps", 
   await expect(
     page.getByText("B has no frame at this model time."),
   ).toBeVisible();
+  await page
+    .getByLabel("Comparison timing", { exact: true })
+    .selectOption("nearby");
+  await expect(
+    page.getByLabel("Comparison split", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/B time offset: \+4\.594 s/)).toBeVisible();
+  await expect(
+    page.getByText("B · HEC-RAS 2D: 2022-08-20T00:00:04.594Z", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Comparison timing", { exact: true })
+    .selectOption("exact");
+  await expect(
+    page.getByLabel("Comparison split", { exact: true }),
+  ).toHaveCount(0);
   await page.getByLabel("Model timestep").fill("1");
   await expect(page.getByText("2022-08-20 01:00 UTC")).toBeVisible();
   await expect(

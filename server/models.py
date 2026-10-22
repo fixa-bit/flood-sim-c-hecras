@@ -61,7 +61,7 @@ class Structure(StrictModel):
 class Hydraulics(StrictModel):
     engine: Literal["HEC-RAS 2D", "LISFLOOD-FP"]
     equations: Literal["full SWE", "local inertial"]
-    manning_source: Literal["ESA WorldCover", "Dynamic World"]
+    manning_source: Literal["ESA WorldCover", "Dynamic World", "Prepared model"]
     structures: list[Structure]
 
     @model_validator(mode="after")

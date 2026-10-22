@@ -1,6 +1,11 @@
 import { defineConfig } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+
+const browserTemp = resolve("workspace/temp/browser-tests");
+mkdirSync(browserTemp, { recursive: true });
+process.env.TEMP = browserTemp;
+process.env.TMP = browserTemp;
 
 if (
   !process.env.PLAYWRIGHT_BROWSERS_PATH &&

@@ -25,6 +25,25 @@ type Study = {
     >;
   } | null;
   hydrograph: Graph | null;
+  geometry_roughness?: {
+    bed_is_surveyed: boolean;
+    classes: { name: string; n: number; low: number; high: number }[];
+    source_reference: string;
+    available_cases: { label: string; id: string; result_id: string }[];
+  } | null;
+  inflow_improvement?: {
+    additional_reviewed_observations: number;
+    promoted_to_hydraulic_models: boolean;
+    coverage: Record<string, { maximum_gap_hours: number }>;
+    lateral_inflows: { state: string };
+    scores?: Record<
+      string,
+      {
+        baseline: { kge: number | null };
+        candidate: { kge: number | null };
+      }
+    >;
+  } | null;
 };
 
 export function StudyPanel() {
@@ -82,6 +101,101 @@ export function StudyPanel() {
         is a hydrologic routing experiment.
       </p>
       <div className="study-input-notes">
+        {study.geometry_roughness && (
+          <section
+            aria-label="Geometry and roughness"
+            className="geometry-roughness"
+          >
+            <h3>Geometry and roughness</h3>
+            <p>
+              {study.geometry_roughness.bed_is_surveyed
+                ? "Channel bed: reviewed survey raster on the hydraulic terrain grid."
+                : "Surveyed channel geometry is still missing. The zoned roughness case retains the estimated bed."}
+            </p>
+            <p>
+              Spatial roughness uses ESA WorldCover 2021 and comparable classes
+              in the{" "}
+              <a
+                href={study.geometry_roughness.source_reference}
+                target="_blank"
+                rel="noreferrer"
+              >
+                USACE roughness guidance
+              </a>
+              . Values are provisional and have not been calibrated to this
+              reach.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Roughness zone</th>
+                  <th>Manning n</th>
+                  <th>Published range</th>
+                </tr>
+              </thead>
+              <tbody>
+                {study.geometry_roughness.classes.map((zone) => (
+                  <tr key={zone.name}>
+                    <td>{zone.name}</td>
+                    <td>{zone.n.toFixed(3)}</td>
+                    <td>
+                      {zone.low.toFixed(3)}–{zone.high.toFixed(3)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p>
+              Ranges describe comparable land classes; they are not confidence
+              limits.
+            </p>
+            {study.geometry_roughness.available_cases.map((item) => (
+              <p key={item.id}>
+                View in Scenario lab → Base scenario case → {item.label}.
+              </p>
+            ))}
+          </section>
+        )}
+        {study.inflow_improvement && (
+          <div className="inflow-improvement">
+            <h3>Inflow improvement candidate</h3>
+            <p>
+              {study.inflow_improvement.additional_reviewed_observations}{" "}
+              additional timed upstream observations reviewed.
+              {study.inflow_improvement.scores && (
+                <>
+                  {" "}
+                  Withheld routing KGE:{" "}
+                  {fmt(study.inflow_improvement.scores.validation.baseline.kge)}
+                  {" → "}
+                  {fmt(
+                    study.inflow_improvement.scores.validation.candidate.kge,
+                  )}
+                  .
+                </>
+              )}
+            </p>
+            <p>
+              Maximum observation gaps: Warsak{" "}
+              {study.inflow_improvement.coverage.warsak.maximum_gap_hours} h;
+              Swat/Charsadda Road{" "}
+              {
+                study.inflow_improvement.coverage["charsadda-road"]
+                  .maximum_gap_hours
+              }{" "}
+              h. Complete timed upstream and lateral inputs are still required.
+            </p>
+            <p>
+              Local inflows: {study.inflow_improvement.lateral_inflows.state}.
+            </p>
+            {!study.inflow_improvement.promoted_to_hydraulic_models && (
+              <p>
+                Candidate has not been applied to the HEC-RAS or LISFLOOD
+                results shown in Model results.
+              </p>
+            )}
+          </div>
+        )}
         <p>
           <strong>Initial moisture:</strong>{" "}
           {study.moisture?.product ?? "Not acquired"}. Provider quality flags

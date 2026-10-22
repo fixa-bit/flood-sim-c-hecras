@@ -44,7 +44,7 @@ export type Scenario = {
   hydraulics: {
     engine: "HEC-RAS 2D" | "LISFLOOD-FP";
     equations: "full SWE" | "local inertial";
-    manning_source: "ESA WorldCover" | "Dynamic World";
+    manning_source: "ESA WorldCover" | "Dynamic World" | "Prepared model";
     structures: {
       type: "barrage" | "levee" | "reservoir" | "breach";
       name: string;

@@ -1,0 +1,25 @@
+{
+  "version": "worldcover-2021-roughness-prior-v1",
+  "source": "https://www.hec.usace.army.mil/confluence/rasdocs/rmum/6.6/land-classification-layers",
+  "source_accessed": "2026-10-22",
+  "classification_source": "https://esa-worldcover.org/en/data-access",
+  "basis": "Analyst crosswalk from ESA WorldCover classes to comparable USACE-published NLCD roughness ranges. These are depth-independent priors for appreciable flood depths, not field measurements or a calibrated Pakistan lookup.",
+  "limitations": [
+    "WorldCover 2021 predates the August 2022 event; vegetation, crops and development may have changed.",
+    "WorldCover does not distinguish forest type, crop height, urban density or channel bed material. The selected values are provisional within published comparable-class ranges.",
+    "Built-up resistance approximates unresolved obstructions; it does not create buildings, roads, walls, bridges or levees in the terrain.",
+    "The open-water prior does not establish actual channel roughness. Bed material, vegetation, flow depth and bank condition need local review.",
+    "Published ranges are not probability distributions or confidence limits. No coefficients were selected using withheld Nowshera observations.",
+    "Snow, ice, moss, lichen, mangrove and unknown classes are refused without an additional justified local crosswalk."
+  ],
+  "classes": [
+    {"code": 10, "name": "Tree cover", "n": 0.12, "low": 0.08, "high": 0.20, "reference_nlcd": "41/42/43", "rationale": "Forest-type uncertainty retained across the published forest ranges."},
+    {"code": 20, "name": "Shrubland", "n": 0.09, "low": 0.07, "high": 0.16, "reference_nlcd": "52", "rationale": "Comparable shrub/scrub vegetation; density and height require field review."},
+    {"code": 30, "name": "Grassland", "n": 0.035, "low": 0.025, "high": 0.05, "reference_nlcd": "71", "rationale": "Comparable grass/herbaceous cover under appreciable inundation depth."},
+    {"code": 40, "name": "Cropland", "n": 0.04, "low": 0.02, "high": 0.05, "reference_nlcd": "82", "rationale": "Cultivated-crop prior; no event-specific crop height or harvesting survey is available."},
+    {"code": 50, "name": "Built-up", "n": 0.10, "low": 0.06, "high": 0.20, "reference_nlcd": "22/23/24", "rationale": "Developed-density uncertainty retained; WorldCover supplies no impervious-fraction subclass."},
+    {"code": 60, "name": "Bare sparse vegetation", "n": 0.027, "low": 0.023, "high": 0.03, "reference_nlcd": "31", "rationale": "Comparable barren rock/sand/clay class; material is not surveyed."},
+    {"code": 80, "name": "Permanent water channel prior", "n": 0.035, "low": 0.025, "high": 0.05, "reference_nlcd": "11", "rationale": "Open-water/channel prior; does not infer grain size or validate bathymetry."},
+    {"code": 90, "name": "Herbaceous wetland", "n": 0.065, "low": 0.05, "high": 0.085, "reference_nlcd": "95", "rationale": "Comparable emergent herbaceous wetland; woody wetlands are not assumed."}
+  ]
+}

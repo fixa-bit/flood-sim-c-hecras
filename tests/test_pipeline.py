@@ -151,6 +151,22 @@ def test_model_binding_and_changed_file(isolated, scenario, monkeypatch):
     assert not next(c for c in worker.preflight(s)["checks"] if c["key"] == "prepared_model")["passed"]
 
 
+def test_changed_registered_inflow_invalidates_model_binding(isolated, scenario, monkeypatch):
+    s = seed(isolated, scenario)
+    domain.prepare_domain(s)
+    project = isolated / "input-hash-test"
+    project.mkdir()
+    (project / "test.p01").write_text("isolated input-binding fixture")
+    worker.bind(s, project, "01", "Isolated source dependency test")
+    monkeypatch.setattr(worker, "runtimes", lambda: {"hec_ras": True, "ras_commander": True})
+    changed = isolated / "changed-inflow.csv"
+    changed.write_text("time,station_id,discharge_m3s,source,value_type\n2022-08-20T00:00:00Z,warsak,200,test,modeled\n2022-09-05T00:00:00Z,warsak,200,test,modeled\n")
+    cli.register("inflow", changed, "isolated changed input", "test only", "test flow")
+    check = worker.preflight(s)
+    assert not check["ready"]
+    assert not next(item for item in check["checks"] if item["key"] == "model_assets")["passed"]
+
+
 def export_manifest(root, s):
     prepared = domain.prepare_domain(s)
     path = raster(root / "depth.tif", values=np.full((100, 100), 1.5))
@@ -213,3 +229,75 @@ def test_api_schema_rejects_bad_scenarios_and_cross_origin(isolated, scenario, m
         assert client.post("/api/jobs", json=scenario.model_dump(mode="json")).status_code == 409
         assert client.post("/api/domain", json={}, headers={"Origin": "https://unrelated.example"}).status_code == 403
         assert client.post("/api/scenarios/validate", json={"schema_version": 9}).status_code == 422
+
+
+@pytest.mark.parametrize("engine,plan", [("HEC-RAS 2D", "01"), ("LISFLOOD-FP", "screen.par")])
+def test_attach_and_execute_selected_engine(isolated, scenario, monkeypatch, engine, plan):
+    import sys
+    from types import SimpleNamespace
+
+    s = seed(isolated, scenario)
+    s.hydraulics.engine = engine
+    s.hydraulics.equations = "full SWE" if engine == "HEC-RAS 2D" else "local inertial"
+    domain.prepare_domain(s)
+    project = isolated / "source-model"
+    project.mkdir()
+    (project / ("test.p01" if engine == "HEC-RAS 2D" else plan)).write_text(
+        "Synthetic adapter fixture only" if engine == "HEC-RAS 2D" else "acceleration\n"
+    )
+    module = importlib.import_module("server.app")
+    payload = {"scenario": s.model_dump(mode="json"), "project": str(project), "plan": plan, "review": "Synthetic adapter verification only"}
+    with TestClient(module.app) as client:
+        response = client.post("/api/model-bindings", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json() == {"engine": engine, "plan": plan, "scenario_sha256": scenario_hash(s)}
+        assert client.post("/api/model-bindings", json=payload, headers={"Origin": "https://unrelated.example"}).status_code == 403
+        assert client.post("/api/model-bindings", json={**payload, "project": "relative-model"}).status_code == 422
+        assert client.post("/api/model-bindings", json={**payload, "review": " "}).status_code == 422
+
+    monkeypatch.setattr(worker, "runtimes", lambda: {
+        "hec_ras": True, "ras_commander": True, "hec_ras_exe": "test-Ras.exe",
+        "lisflood_fp": True, "lisflood_fp_exe": "test-lisflood.exe",
+    })
+    assert worker.preflight(s)["ready"]
+    calls = []
+    def init_ras(folder, executable, ras_object):
+        assert Path(folder) != project
+        assert (Path(folder) / "test.p01").read_bytes() == (project / "test.p01").read_bytes()
+        calls.append(("ras", executable))
+    def compute_ras(selected_plan, **kwargs):
+        assert selected_plan == "01"
+        return True
+    monkeypatch.setitem(sys.modules, "ras_commander", SimpleNamespace(
+        RasPrj=object, init_ras_project=init_ras,
+        RasCmdr=SimpleNamespace(compute_plan=compute_ras),
+    ))
+    def run_lisflood(command, **kwargs):
+        assert Path(kwargs["cwd"]) != project
+        assert Path(command[1]).name == "screen.par"
+        calls.append(("lisflood", command[0]))
+    monkeypatch.setattr(worker.subprocess, "run", run_lisflood)
+    job_id = "a" * 32
+    worker.execute(s, job_id)
+    status = store.read_json(isolated / "jobs" / job_id / "status.json")
+    assert status["state"] == "computed", status
+    assert calls == ([("ras", "test-Ras.exe")] if engine == "HEC-RAS 2D" else [("lisflood", "test-lisflood.exe")])
+
+
+@pytest.mark.parametrize("field,value,check_key", [
+    ("engine", "LISFLOOD-FP", "model_engine"),
+    ("scenario_sha256", "0" * 64, "model_scenario"),
+])
+def test_preflight_rejects_wrong_engine_or_scenario_binding(isolated, scenario, monkeypatch, field, value, check_key):
+    s = seed(isolated, scenario)
+    domain.prepare_domain(s)
+    project = isolated / "prepared-project"
+    project.mkdir()
+    (project / "test.p01").write_text("Synthetic identity fixture only")
+    binding = worker.bind(s, project, "01", "Synthetic identity test")
+    binding[field] = value
+    write_json(isolated / "bindings" / f"{scenario_hash(s)}.json", binding)
+    monkeypatch.setattr(worker, "runtimes", lambda: {"hec_ras": True, "ras_commander": True})
+    check = worker.preflight(s)
+    assert not check["ready"]
+    assert not next(c for c in check["checks"] if c["key"] == check_key)["passed"]

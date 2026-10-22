@@ -39,12 +39,13 @@ def run_script(path, log):
         raise RuntimeError(f"HEC-HMS script failed; inspect {log}")
 
 
-def project_files(candidates):
-    PROJECT.mkdir(parents=True, exist_ok=True)
+def project_files(candidates, *, project=None, data_label="FFC-DAILY-INTERPOLATED"):
+    project = PROJECT if project is None else Path(project)
+    project.mkdir(parents=True, exist_ok=True)
     def save(name, text):
         import re
         text = re.sub(r"(?m)^(\S[^\n]*:) ([^\n]+)\n", r"\1 \2\n     Last Modified Date: 20 October 2026\n     Last Modified Time: 00:00:00\n", text)
-        (PROJECT / name).write_text(text, encoding="utf-8")
+        (project / name).write_text(text, encoding="utf-8")
     header = "Project: upstream\n     Version: 4.14\n     Filepath Separator: /\n     DSS File Name: inputs.dss\n     Time Zone ID: UTC\nEnd:\n\n"
     header += "Precipitation: GaugeOnly\n     Filename: GaugeOnly.met\nEnd:\n\nControl: Event\n     FileName: Event.control\nEnd:\n\n"
     runs = ""
@@ -63,22 +64,32 @@ def project_files(candidates):
     save("GaugeOnly.met", "Meteorology: GaugeOnly\n     Version: 4.14\n     Unit System: Metric\n     Set Missing Data to Default: No\n     Precipitation Method: Specified Average\n     Evapotranspiration Method: None\n     Snowmelt Method: None\n" + "".join(f"     Use Basin Model: {name}\n" for name, _, _ in candidates) + "End:\n\nPrecip Method Parameters: Specified Average\n     Allow Depth Override: No\nEnd:\n")
     gages = "Gage Manager: upstream\n     Version: 4.14\n     Filepath Separator: /\nEnd:\n\n"
     for name in ["Warsak", "SwatCharsadda", "UnmeasuredLocal"]:
-        gages += f"Gage: {name}\n     Gage: {name}\n     Gage Type: Flow\n     Data Source Type: External DSS\n     Filename: inputs.dss\n     Pathname: /KABUL/{name.upper()}/FLOW//1HOUR/FFC-DAILY-INTERPOLATED/\n     Variant: Variant-1\n       Start Time: 20 August 2022, 01:00\n       End Time: 5 September 2022, 01:00\n     End Variant: Variant-1\nEnd:\n\n"
+        gages += f"Gage: {name}\n     Gage: {name}\n     Gage Type: Flow\n     Data Source Type: External DSS\n     Filename: inputs.dss\n     Pathname: /KABUL/{name.upper()}/FLOW//1HOUR/{data_label}/\n     Variant: Variant-1\n       Start Time: 20 August 2022, 01:00\n       End Time: 5 September 2022, 01:00\n     End Variant: Variant-1\nEnd:\n\n"
     save("upstream.gage", gages)
 
 
-def compute_batch(candidates, local_m3s, prefix):
-    with (STUDY / "upstream-hourly-interpolated.csv").open(encoding="utf-8", newline="") as stream:
+def compute_batch(candidates, local_m3s, prefix, *, project=None, boundary_csv=None, data_label="FFC-DAILY-INTERPOLATED"):
+    project = PROJECT if project is None else Path(project)
+    boundary_csv = STUDY / "upstream-hourly-interpolated.csv" if boundary_csv is None else Path(boundary_csv)
+    with boundary_csv.open(encoding="utf-8", newline="") as stream:
         rows = list(csv.DictReader(stream))
     values = {"Warsak": [float(row["discharge_m3s"]) for row in rows if row["station_id"] == "warsak"],
               "SwatCharsadda": [float(row["discharge_m3s"]) for row in rows if row["station_id"] == "charsadda-road"]}
-    values["UnmeasuredLocal"] = [local_m3s] * len(values["Warsak"])
-    write_json(PROJECT / f"{prefix}-inputs.json", values)
+    count = len(values["Warsak"])
+    # A reviewed local hydrograph replaces the fitted constant, avoiding a
+    # second addition of the same estimated lateral contribution.
+    local = np.asarray(local_m3s, dtype=float)
+    if local.ndim == 0:
+        local = np.full(count, float(local))
+    if local.shape != (count,) or not np.isfinite(local).all() or np.any(local < 0):
+        raise ValueError("Local inflows must be finite, nonnegative, and cover every upstream timestep.")
+    values["UnmeasuredLocal"] = local.tolist()
+    write_json(project / f"{prefix}-inputs.json", values)
     for name in ["upstream.hms", "upstream.gage"]:
-        path = PROJECT / name
+        path = project / name
         path.write_text(path.read_text(encoding="utf-8").replace("inputs.dss", f"{prefix}-inputs.dss"), encoding="utf-8")
-    write_json(PROJECT / f"{prefix}-project-text.json", {path.name: path.read_text(encoding="utf-8") for path in PROJECT.iterdir() if path.suffix in {".hms", ".run", ".gage", ".control", ".met", ".basin"}})
-    script = PROJECT / f"{prefix}-compute.py"
+    write_json(project / f"{prefix}-project-text.json", {path.name: path.read_text(encoding="utf-8") for path in project.iterdir() if path.suffix in {".hms", ".run", ".gage", ".control", ".met", ".basin"}})
+    script = project / f"{prefix}-compute.py"
     script.write_text("""from hms.model.JythonHms import *
 from hec.heclib.dss import HecDss
 from hec.io import TimeSeriesContainer
@@ -92,7 +103,7 @@ f = HecDss.open(os.path.join(folder, %r))
 origin = HecTime('20Aug2022', '0100')
 for name, data in values.items():
     ts = TimeSeriesContainer()
-    ts.fullName = '/KABUL/' + name.upper() + '/FLOW//1HOUR/FFC-DAILY-INTERPOLATED/'
+    ts.fullName = '/KABUL/' + name.upper() + '/FLOW//1HOUR/' + %r + '/'
     ts.interval = 60
     ts.units = 'CMS'
     ts.type = 'INST-VAL'
@@ -125,9 +136,9 @@ for run in %r:
 out.close()
 from java.lang import System
 System.exit(0)
-""" % (PROJECT.as_posix(), f"{prefix}-inputs.json", f"{prefix}-inputs.dss", f"{prefix}-outputs.csv", [item[0] for item in candidates]), encoding="utf-8")
-    run_script(script, PROJECT / f"{prefix}-engine.log")
-    with (PROJECT / f"{prefix}-outputs.csv").open(encoding="utf-8", newline="") as stream:
+""" % (project.as_posix(), f"{prefix}-inputs.json", f"{prefix}-inputs.dss", data_label, f"{prefix}-outputs.csv", [item[0] for item in candidates]), encoding="utf-8")
+    run_script(script, project / f"{prefix}-engine.log")
+    with (project / f"{prefix}-outputs.csv").open(encoding="utf-8", newline="") as stream:
         result = list(csv.DictReader(stream))
     grouped = {}
     epoch = datetime(1899, 12, 31, tzinfo=timezone.utc)

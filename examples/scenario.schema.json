@@ -201,7 +201,8 @@
         "manning_source": {
           "enum": [
             "ESA WorldCover",
-            "Dynamic World"
+            "Dynamic World",
+            "Prepared model"
           ],
           "title": "Manning Source",
           "type": "string"

@@ -1,0 +1,257 @@
+PROJECT DEPENDENCIES AND DATA TRANSFER GUIDE
+Captured: 2026-10-22, from this project's local files and installed environment.
+
+1. MATCH THIS ENVIRONMENT
+Current OS: Windows 10 build 19045, AMD64/x64.
+Python: CPython 3.11.9, 64-bit.
+Node.js: 24.19.0. npm: 11.17.0.
+Use these same versions for the closest reproduction. README minimums are
+Python 3.11+ and Node 24+, but newer versions can change compatibility.
+Use PowerShell for the commands below. Git is optional if copying the folder.
+A browser with WebGL support is needed for the Cesium viewer.
+
+requirements.txt is the exact installed Python package snapshot, including
+transitive dependencies, scientific packages, data tools and test tools.
+server/requirements.txt and server/requirements-data.txt contain broader
+supported version ranges; they are NOT an exact environment snapshot.
+server/requirements-lock.txt currently matches the root requirements.txt pins.
+package-lock.json locks JavaScript packages, including transitive dependencies.
+Copy package.json, package-lock.json and .npmrc together; use npm ci to restore.
+No Python requirements file installs Node packages, engines or scientific data.
+
+2. COPY THE PROJECT AND ITS EXISTING DATA
+Stop the API, active model runs and frontend before taking a consistent copy.
+Copy the CURRENT working folder, including uncommitted/new source files, not
+just a Git clone. There are local changes and files not captured by a clone.
+Include server/, src/, public/, scripts/, examples/, docs/, tests/, root config
+files, requirements.txt, requirement_data.txt, and any local .env configuration.
+Preserve the entire workspace/ tree to retain the same data and results.
+workspace/ and .env are ignored by Git; a clone will NOT transfer them.
+If FLOOD_WORKSPACE was set outside this project, copy that directory as well.
+
+Workspace contents to preserve:
+- assets.json: registered inputs, source/license records and SHA-256 hashes.
+- assets/: registered terrain, land cover, rivers, catchment, soil, rainfall,
+  moisture and inflow files actually used by this installation.
+- downloads/nowshera-2022/raw/: original provider downloads.
+- downloads/nowshera-2022/prepared/: prepared GeoTIFF and GeoJSON inputs.
+- downloads/nowshera-2022/references/: original FFC PDFs, extracted text,
+  bulletin indexes and gauge CSV transcriptions.
+- downloads/nowshera-2022/study/: moisture/rainfall candidates, reviewed gauge
+  data, HEC-HMS project, routing/calibration files and study reports.
+- downloads/nowshera-2022/acquisition.json, scenario.json and verification
+  records: acquisition metadata, licenses, hashes and data provenance.
+- domains/: scenario-specific DEM clips and prepared domain metadata.
+- bindings/: exact scenario-to-model bindings and input file hashes.
+- screening/: prepared LISFLOOD cases, case.json, project inputs and reviews.
+- hecras/: exploratory HEC-RAS source model, case.json, native full-event run
+  HDF/logs, numerical checks and raster export; see docs/HECRAS_MODEL.md.
+- hydrology/: HEC-HMS execution copies, logs and outputs.
+- jobs/: execution state, model copies and logs.
+- results/: published raster frames, manifests, gauge results and overlays.
+- engine-checks/: engine verification evidence.
+- tools/: engine distributions, supporting DLLs, browsers and build toolchain.
+- runtimes.json: paths to the three external engine executables.
+- cache/ and temp/: preserve for a full archive; normally rebuildable caches
+  and temporary files are not needed to retain scientific data/results.
+Do not edit GeoTIFFs/CSV/model inputs during transfer: bindings verify bytes.
+
+Exclude .venv/ and node_modules/ from the working installation on the new PC;
+recreate them with the commands below. Copying .venv is not a reliable install.
+dist/ is rebuildable. .git/ is useful for history but is not runtime data.
+
+3. CURRENT REGISTERED INPUT INVENTORY
+Paths below are relative to workspace/. Copy every file with assets.json.
+The SHA-256 values identify the exact bytes currently registered.
+
+catchment: HydroBASINS v1c level-8 candidate upstream union — REVIEW REQUIRED
+  File: assets/catchment-b323aa8d4fb1a826.geojson
+  SHA-256: b323aa8d4fb1a826377ea608379ab640cc95f51cd0e6b09ea8d33dcf48d484e9
+  Source: https://data.hydrosheds.org/file/hydrobasins/standard/hybas_as_lev01-12_v1c.zip
+  License: HydroSHEDS license in its Technical Documentation; retain Lehner & Grill (2013) and WWF attribution
+
+dem: FABDEM v1.2 ~30 m
+  File: assets/dem-d8415903bd24e85b.tif
+  SHA-256: d8415903bd24e85b9654e50b842ffb6df2f3614c85844f9fb54cb5b6727faa28
+  Source: https://data.bris.ac.uk/datasets/s5hqmjcdj8yo2ibzi9b4ew3sn/N30E070-N40E080_FABDEM_V1-2.zip
+  License: CC BY-NC-SA 4.0; commercial license separately
+
+hydrography: HydroRIVERS v1.0, upper Kabul / Warsak / Nowshera
+  File: assets/hydrography-5bbed9819071b8c1.geojson
+  SHA-256: 5bbed9819071b8c1f32ad7a091044ae770c8fa16e5ed56045d0e5437be7e318a
+  Source: https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_as_shp.zip
+  License: HydroSHEDS license in its Technical Documentation; retain Lehner & Grill (2013) and WWF attribution
+
+inflow: Exploratory observed/interpolated gauge series + modeled Nowshera aggregate
+  File: assets/inflow-9c6f973a10499566.csv
+  SHA-256: 9c6f973a1049956616546ec7e0ff6def4452aa9d57fd48758b70e59d3ea6dc62
+  Source: FFC daily reports + computed HEC-HMS FittedRouting; see screening review and routing-calibration.json
+  License: Derived research input; retain FFC and USACE attribution; source report terms apply
+
+landcover: ESA WorldCover 2021 v200; categorical nearest-neighbor ~30 m clip
+  File: assets/landcover-f207196b107d4363.tif
+  SHA-256: f207196b107d43633ad3e10ea954b2540aa8d78b561e86e28faa6290b9f15cd8
+  Source: https://esa-worldcover.org/en/data-access
+  License: CC BY 4.0
+
+rainfall: CHIRPS v2.0 final daily, 2022-08-20 through 2022-09-04
+  File: assets/rainfall-7bc7eedd6e2f5ce6.tif
+  SHA-256: 7bc7eedd6e2f5ce6a57a387891b2f5a3952f67fae5926eb8c41614334debad78
+  Source: https://www.chc.ucsb.edu/data/chirps
+  License: CC BY 4.0; cite Funk et al. (2015) and UCSB CHC
+
+soil: SoilGrids 2.0, raw sand/clay/SOC/bulk-density, 0–5 cm
+  File: assets/soil-375a219da93931af.tif
+  SHA-256: 375a219da93931af289870bfd10ae322de4bc3fda80d562f233a1546e92c0421
+  Source: https://isric.org/explore/soilgrids/
+  License: CC BY 4.0; retain ISRIC attribution
+
+The complete acquisition/source URLs, processing notes and limitations remain
+in assets.json and downloads/nowshera-2022/acquisition.json. Keep them together.
+FABDEM is CC BY-NC-SA 4.0; preserve the recorded terms and attribution for each
+input. Copying the existing files preserves this dataset more reliably than
+re-downloading sources that may change or become unavailable.
+
+4. EXTERNAL MODEL ENGINES (NOT INSTALLED BY PIP/NPM)
+HEC-RAS 6.6:
+  Current executable: D:/FloodTools/HEC-RAS-6.6/Ras.exe
+  This installation is OUTSIDE the project. Preserve its installer and install
+  the same version on the target Windows machine, preferably at the same path.
+  Official download reference recorded in README:
+  https://www.hec.usace.army.mil/software/hec-ras/download.aspx
+  Complete any first-run prerequisites under the user running the model.
+HEC-HMS 4.14 portable:
+  workspace/tools/hec-hms/HEC-HMS-4.14/HEC-HMS.exe
+  Copy the whole distribution, including jre/, bin/, lib/ and hms.jar.
+  Its bundled Java/Jython/HEC libraries are not Python pip dependencies.
+  Official download reference recorded in README:
+  https://www.hec.usace.army.mil/software/hec-hms/downloads.aspx
+LISFLOOD-FP 8.0.3 CPU/OpenMP:
+  workspace/tools/lisflood-build/lisflood.exe
+  Copy the complete build directory and adjacent runtime DLLs, especially
+  libomp.dll and the MinGW runtime DLLs; do not copy only the executable.
+  Preserve workspace/tools/lisflood/ and llvm-mingw/ to retain source/toolchain.
+  This build disables NetCDF/CUDA and has Windows allocation-guard fixes in
+  utility.cpp. Its exact executable hash is checked by screening preflight;
+  another build may require fresh preparation/review even at the same version.
+  Source archive reference recorded in README:
+  https://zenodo.org/records/4073011
+  Recorded archive MD5: 00602cbba617a50a34478495d2688add
+CMake/Ninja Python package versions are pinned in requirements.txt; LLVM-MinGW
+is a separate directory. Rebuilding is unnecessary if the copied build works.
+
+5. PATHS AND SETTINGS
+For a transfer WITHOUT path changes, restore the project at:
+  D:/Projects/flood sim cursor
+and install HEC-RAS at:
+  D:/FloodTools/HEC-RAS-6.6
+Several stored model bindings, manifests and generated scripts contain absolute
+paths. Matching these locations is the most direct way to preserve them.
+If the target uses another drive/folder, update workspace/runtimes.json and
+review binding project paths, model inputs, generated scripts and manifests.
+Rebind models with server.cli bind as necessary, retaining the original scenario,
+plan and review. Do not bulk-replace text inside hash-bound model files: changing
+those bytes invalidates their hashes and requires preparation/binding again.
+FLOOD_WORKSPACE alone does not rewrite absolute paths already saved in files.
+
+Runtime JSON keys are hec_ras_exe, hec_hms_exe, lisflood_fp_exe.
+The worker also accepts environment overrides HEC_RAS_EXE, HEC_HMS_EXE,
+LISFLOOD_FP_EXE. The study_hms helper reads hec_hms_exe from runtimes.json
+directly, so keep that JSON correct even when environment overrides are set.
+FLOOD_WORKSPACE selects a different workspace directory (default ./workspace).
+Set backend variables in the launching shell; the backend does not automatically
+load .env. Vite reads frontend .env values:
+  VITE_CESIUM_ION_TOKEN: optional Cesium World Terrain access.
+  VITE_LOCAL_TERRAIN_URL: optional self-hosted quantized-mesh terrain service.
+Copy any externally hosted/local terrain dataset and run its service if used.
+.env.example is a template, not a backup of your current settings.
+Provider credentials outside the project (Earthdata/netrc, CDS, MERIT) must be
+configured separately if you want new authenticated downloads. Existing copied
+public inputs do not require downloading them again.
+
+Browser drafts and the saved scenario library are stored in browser localStorage,
+not workspace/. Export ALL wanted scenarios as JSON in the old browser before
+moving, then import them in the new installation. Keep the same app origin
+http://127.0.0.1:5174 for browser storage consistency within each browser.
+Public OSM/ArcGIS imagery and optional Cesium terrain require network access;
+copying workspace/ does not make those external map services available offline.
+
+6. RESTORE ON THE NEW WINDOWS MACHINE
+Install the matching Python/Node versions and engines, copy the project and
+workspace, then run these PowerShell commands from the project root:
+
+  python -m venv .venv
+  .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+  npm ci
+  $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) 'workspace\tools\browsers'
+  npx --no-install playwright install chromium --only-shell
+
+The browser installation is needed for Playwright tests; it is not the user's
+interactive browser. It restores the Chromium revision required by the locked
+Playwright package. pip/npm/browser installation normally needs internet access.
+Do not subsequently run scripts/setup.ps1 for exact restoration: that script
+installs the broader server/requirements.txt ranges and may upgrade Python pins.
+
+Check the restored installation:
+  .\.venv\Scripts\python.exe -m pip check
+  .\.venv\Scripts\python.exe -m server.verify_data
+  npm run build
+
+verify_data checks acquisition/hash/geospatial contracts and writes verification
+artifacts; it does not establish scientific calibration or guarantee all model
+bindings are ready. For each exported scenario, check:
+  .\.venv\Scripts\python.exe -m server.cli preflight path\to\scenario.json
+Do not submit compute until the intended scenario's required checks pass.
+
+Start the application:
+  .\scripts\dev.ps1
+Open http://127.0.0.1:5174 (API: http://127.0.0.1:8010).
+For optional test verification, with both services running:
+  .\.venv\Scripts\python.exe -m pytest tests -q
+  npm test
+
+7. OPTIONAL OFFLINE INSTALLATION PREPARATION
+On the source Windows x64/Python 3.11 machine, while online:
+  .\.venv\Scripts\python.exe -m pip download -r requirements.txt -d workspace\wheelhouse
+Confirm this completes for every pin before relying on it. Packages without a
+compatible wheel may require additional build tools or a locally built wheel.
+Copy workspace/wheelhouse to the destination, then install with:
+  .\.venv\Scripts\python.exe -m pip install --no-index --find-links workspace\wheelhouse -r requirements.txt
+For Node, npm ci populates the project-local workspace/cache/npm cache via
+.npmrc. Preserve it and try npm ci --offline on a clean matching machine before
+depending on an offline transfer; an incomplete cache cannot restore everything.
+Preserve workspace/tools/browsers and the full engine distributions/installers.
+No offline wheel/cache bundle is created merely by writing these two files.
+
+8. JAVASCRIPT DIRECT DEPENDENCIES (EXACT RESOLVED VERSIONS)
+package-lock.json is authoritative for these and all transitive packages.
+
+dependencies:
+  cesium==1.146.0
+  react==19.3.1
+  react-dom==19.3.1
+  resium==1.27.0
+
+devDependencies:
+  @playwright/test==1.64.1
+  @types/node==24.19.2
+  @types/react==19.3.0
+  @types/react-dom==19.3.0
+  @vitejs/plugin-react==6.1.2
+  oxlint==1.88.0
+  prettier==3.9.10
+  typescript==7.0.2
+  vite==8.3.4
+  vite-plugin-cesium==1.2.23
+
+9. REPRODUCTION LIMITS
+These files capture dependencies and migration instructions; they are not a
+backup of workspace data, browser storage, engine installers or credentials.
+Use the same Windows architecture, package locks, input bytes and engine build
+for closest reproduction. Different hardware/thread scheduling can still affect
+numerical results. Linux/macOS require separate engine integration and are not
+a zero-change replacement for this Windows-specific setup.
+Preserving the current data preserves its limitations too: the screening case
+is exploratory, and an accepted calibrated/validated 2D model is not supplied.
+See docs/DATA_ACQUISITION.md, docs/STUDY_PROGRESS.md, docs/SCREENING_MODEL.md
+and README.md for processing provenance and outstanding scientific requirements.

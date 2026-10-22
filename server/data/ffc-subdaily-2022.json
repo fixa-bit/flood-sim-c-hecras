@@ -1,0 +1,35 @@
+{
+  "review": "Visually checked against page 1 of the original FFC PDFs on 2026-10-22. Reported times are PKT (UTC+05:00). These are sparse snapshots, not continuous telemetry.",
+  "observations": [
+    {
+      "station_id": "warsak",
+      "reported_time_local": "2022-08-26T12:00:00+05:00",
+      "discharge_cusecs": 106000,
+      "source": "https://www.ffc.gov.pk/wp-content/uploads/2022/08/DFSR-26-08-2022.pdf",
+      "source_sha256": "85b0dffb5b671fd159d25e69635b845920777f3f67c5209a15879da2c8893eee",
+      "page": 1
+    },
+    {
+      "station_id": "warsak",
+      "reported_time_local": "2022-08-27T12:30:00+05:00",
+      "discharge_cusecs": 139000,
+      "source": "https://www.ffc.gov.pk/wp-content/uploads/2022/08/DFSR-27-08-2022.pdf",
+      "source_sha256": "ff24eff9361f3e1da9881e802ac4e32de40b26a5e745070299d14aa33af84d37",
+      "page": 1
+    },
+    {
+      "station_id": "warsak",
+      "reported_time_local": "2022-08-28T13:00:00+05:00",
+      "discharge_cusecs": 120000,
+      "source": "https://www.ffc.gov.pk/wp-content/uploads/2022/08/DFSR-28-08-2022.pdf",
+      "source_sha256": "86bc6e324269ff8d90208d29082396cae92dcaee6368ee246ba87f38c5b5166d",
+      "page": 1
+    }
+  ],
+  "exclusions": [
+    "Swat observations at Khwazakhela, Chakdara and Munda are nested upstream of Khiali/Charsadda Road. Do not add them as independent inflows or substitute them for that gauge.",
+    "Peak values without an explicit observation date and time are not hydrograph ordinates.",
+    "Nowshera is the evaluation gauge; its narrative observations are not inflow or lateral inputs.",
+    "PDMA daily weather report river tables publish a date but no observation time. Preserve them as untimed reference data, not hourly boundary observations."
+  ]
+}
