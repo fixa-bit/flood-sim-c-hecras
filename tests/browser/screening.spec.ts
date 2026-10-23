@@ -46,6 +46,11 @@ test("the real prepared public case passes readiness and opens verified engine o
     name: "Run a scenario case",
     exact: true,
   });
+  const firstOverlayResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/outputs/${output.id}/00000-depth.png`),
+    { timeout: 120000 },
+  );
   await runner
     .getByRole("button", { name: "Load runnable public case", exact: true })
     .click();
@@ -64,14 +69,13 @@ test("the real prepared public case passes readiness and opens verified engine o
       exact: true,
     }),
   ).toBeChecked();
-  const firstOverlayResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes(`/outputs/${output.id}/00000-depth.png`),
-    { timeout: 120000 },
-  );
   await runner
     .getByRole("button", { name: "Prepare & run case", exact: true })
     .click();
+  await expect(runner.locator(".case-outcome.loaded")).toContainText(
+    "Computed output loaded",
+    { timeout: 120000 },
+  );
   await expect(
     page.getByRole("combobox", { name: "Result A", exact: true }),
   ).toHaveValue(output.id, { timeout: 120000 });

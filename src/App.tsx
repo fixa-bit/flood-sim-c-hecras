@@ -33,6 +33,7 @@ import { ScenarioCaseRunner } from "./components/ScenarioCaseRunner";
 import { ModelBindingForm } from "./components/ModelBindingForm";
 import type { CaseOutcome } from "./components/ScenarioCaseRunner";
 import { scenarioCaseValues } from "./lib/scenarioCase";
+import { sameScenario } from "./lib/scenarioMatch";
 import { comparisonFrame as findComparisonFrame } from "./lib/comparison";
 import "./App.css";
 
@@ -239,11 +240,7 @@ function App() {
         if (!active) return;
         setResults(published);
         const output = published.find((item) => item.id === job.result_id);
-        if (
-          output &&
-          JSON.stringify(output.scenario) ===
-            JSON.stringify(scenarioRef.current)
-        ) {
+        if (output && sameScenario(output.scenario, scenarioRef.current)) {
           setResultId(output.id);
           setFrameIndex(0);
           setField("depth");
@@ -273,6 +270,11 @@ function App() {
       setAssets(a);
       setResults(r);
       setPreparedCases(prepared);
+      const current = scenarioRef.current;
+      const output = r.find(
+        (item) => item.frames.length && sameScenario(item.scenario, current),
+      );
+      if (output) openOutput(output);
       if (a.dem)
         setScenario((s) =>
           s.domain.dem_sha256 === a.dem.sha256
@@ -291,6 +293,13 @@ function App() {
     setNotice("");
     setCaseOutcome(undefined);
   };
+  function openOutput(output: Result) {
+    setResultId(output.id);
+    setFrameIndex(0);
+    setField("depth");
+    setPlaying(false);
+    setView("results");
+  }
   function selectStation(id: string) {
     const s = defaultScenarioFor(STATION_BY_ID[id]);
     if (assets.dem) s.domain.dem_sha256 = assets.dem.sha256;
@@ -371,9 +380,15 @@ function App() {
         setFrameIndex(0);
         setTab("scenario");
         if (!run) {
+          const output = results.find(
+            (item) => item.frames.length && sameScenario(item.scenario, valid),
+          );
+          if (output) openOutput(output);
           setCaseOutcome({
             state: "loaded",
-            text: "Case values loaded into the editor. Choose Prepare & run case when ready.",
+            text: output
+              ? "Case values loaded. Published output for these exact values is ready. Press Play below the map."
+              : "Case values loaded into the editor. Choose Prepare & run case when ready.",
           });
           return;
         }
@@ -452,7 +467,7 @@ function App() {
         <a className="brand" href="#">
           <span className="brand-mark">≋</span>
           <span>
-            INDUS<span className="brand-light">LAB</span>
+            Flood<span className="brand-light"> Simulation</span>
             <small>PAKISTAN FLOOD SCENARIOS</small>
           </span>
         </a>
@@ -702,7 +717,18 @@ function App() {
                   </button>
                   <button
                     className={view === "results" ? "active" : ""}
-                    onClick={() => setView("results")}
+                    onClick={() => {
+                      if (!result) {
+                        const output =
+                          results.find(
+                            (item) =>
+                              item.frames.length &&
+                              sameScenario(item.scenario, scenario),
+                          ) ?? results.find((item) => item.frames.length);
+                        if (output) openOutput(output);
+                      }
+                      setView("results");
+                    }}
                   >
                     Model results <span>{results.length}</span>
                   </button>

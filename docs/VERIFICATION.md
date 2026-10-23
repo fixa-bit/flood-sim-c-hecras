@@ -68,3 +68,14 @@ Windows 11's missing WMIC component was restored using Microsoft's package linke
 - `python -m pytest tests -q`: 63 passed; existing dependency deprecation warnings remain. Tests cover time/units/provenance requirements, untimed report exclusion, nested/evaluation gauge rejection, source conflicts, missing lateral coverage, PDF hash changes, and replacement of the constant in private HMS inputs.
 - `npm run build` passed. `npm run lint` passed with the seven existing React warnings. `npm test -- tests/browser/study.spec.ts`: 1 passed, including real API candidate scores, unpublished status, terrain rendering and mobile overflow. Screenshot: `test-results/upstream-routing-study.png`.
 - Both current HEC-RAS and LISFLOOD cases returned ready=true from `/api/preflight`. Original boundary and shared HMS output hashes still match their baseline calibration report. API restarted on port 8010 and exposes the candidate under `/api/study`; Data & provenance displays it and Export study includes its audit.
+
+## 23 October 2026 — geometry and roughness status
+
+The requirement is **partially complete**. A new zoned-roughness HEC-RAS case was computed on 22 October; surveyed bathymetry was not obtained or substituted. The published result explicitly records `bed_is_surveyed=false`. The [geometry and roughness record](GEOMETRY_ROUGHNESS.md) documents sources, ranges, native evidence and the remaining survey requirement.
+
+- Seven WorldCover classes map to six native Manning values (0.027–0.120). The native cell and face tables retain those values and their land-cover association; uniform, nonfinite and out-of-prior fields are rejected.
+- Native full SWE run: 4,624 physical cells, 457 native/385 published frames, 72-hour initialization excluded, volume error 0.000431%, converged initialization and wet connectivity. Native HDF SHA-256: `950b7172d8a17ec50572f1857790dda99f1f32cd17716905b1f94a8b5669912d`.
+- Withheld discharge NSE/KGE/RMSE changed from 0.777953/0.548113/1112.206 m³/s to 0.787315/0.557552/1088.507 m³/s. KGE remains below 0.60. No independent flood extent or water-level validation was added, and the roughness priors were not fitted to withheld observations.
+- The terrain bytes and original shared HEC-HMS inflow are retained. Both original cases and the new variant pass preflight. The timed-Warsak inflow candidate was not applied to this comparison.
+- A reviewed survey raster/coverage import path checks source hashes, projected grid, EGM2008 meters, datum transformation review, historical relevance and complete resolved-channel coverage. Its existence does not constitute a surveyed-geometry replacement.
+- Final backend suite: **81 passed**. Selected browser run: **10 tests passed**, including real variant selection, native output playback, survey-status disclosure, roughness table and mobile overflow. Screenshot: `test-results/geometry-roughness-priors.png`. Build passed; lint passed with the seven existing React warnings.

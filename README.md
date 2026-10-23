@@ -1,4 +1,6 @@
-# Indus Lab — Pakistan flood scenarios
+Run on Windows in PowerShell: `Set-ExecutionPolicy -Scope Process Bypass`, then `.\scripts\setup.ps1` and `.\scripts\dev.ps1`; open http://127.0.0.1:5174. The policy change applies only to the current PowerShell session.
+
+# Flood Simulation — Pakistan flood scenarios
 
 A local research workspace for upstream-first flood scenario preparation and georeferenced **external model output**. Nowshera is the first hydraulic pilot, with Warsak upstream and the Kabul–Indus connection at Attock downstream. Tarbela, Kohala, Akhnur and Marala are useful planning starting points. The full 29-station catalog is a reference; hydraulic compute stays limited to Nowshera until the pilot is proven.
 
@@ -22,6 +24,7 @@ Choose **Load case values** to review/save the result, or **Prepare & run case**
 Node 24+ and Python 3.11+ are required. From this checkout:
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\setup.ps1
 .\scripts\dev.ps1
 ```
@@ -187,3 +190,7 @@ Tests use temporary **synthetic fixtures** and mocked imagery solely to test con
 The [upstream study record](docs/STUDY_PROGRESS.md) describes the HEC-HMS model actually computed, withheld validation scores, moisture/rainfall preparation and the real river/terrain viewer. The default River view centers on the Kabul channel near Nowshera with satellite imagery and local FABDEM topography. Hydraulic calibration remains open because the routing experiment did not meet all validation targets.
 
 The [shared inflow improvement record](docs/INFLOW_IMPROVEMENT.md) adds three verified timed Warsak readings and a separate real HEC-HMS comparison. Run `python -m server.inflows all` and inspect **Data & provenance → Inflow improvement candidate**. Withheld routing KGE improves from 0.462 to 0.469; complete timed Swat/lateral evidence remains unavailable, so published HEC-RAS/LISFLOOD cases have not been replaced. Reviewed routed lateral hydrographs can replace the fitted constant through the new import path.
+
+The [geometry and roughness follow-up](docs/GEOMETRY_ROUGHNESS.md) adds **Base scenario case → HEC-RAS · zoned roughness · estimated bed**. Its full native run published 385 frames with documented spatial roughness and withheld hydraulic KGE 0.558. Surveyed bathymetry is still missing. `python -m server.geometry_inputs run` reproduces this separate case; `--survey` accepts a reviewed terrain/coverage bundle after datum, units, hash and coverage checks. Data & provenance displays the priors and survey status.
+
+The [detailed bathymetry investigation](docs/BATHYMETRY_INVESTIGATION.md) identifies specific survey-project leads, archives public ICESat-2 water-level/photon previews, and evaluates a constrained estimated-bed alternative. No bed measurements have been accepted; the existing terrain remains estimated.

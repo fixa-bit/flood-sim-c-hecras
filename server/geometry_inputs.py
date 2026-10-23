@@ -361,6 +361,16 @@ def build(survey=None):
         Path(inputs["folder"]) / "geometry-inputs.json",
         project / "geometry-inputs.json",
     )
+    if inputs["bed_is_surveyed"]:
+        write_json(
+            project / "channel-geometry.json",
+            {
+                "method": "Reviewed survey terrain on the existing hydraulic grid",
+                "bed_is_estimated_not_surveyed": False,
+                "survey_review": inputs["survey_review"],
+                "terrain_sha256": inputs["terrain_sha256"],
+            },
+        )
     import xml.etree.ElementTree as ET
 
     mapper = project / f"{NAME}.rasmap"
@@ -502,6 +512,7 @@ def build(survey=None):
         "project": str(project),
         "fingerprint": fingerprint,
         "index_path": str(index),
+        "bed_is_surveyed": inputs["bed_is_surveyed"],
         "label": "HEC-RAS · zoned roughness · "
         + ("reviewed survey bed" if inputs["bed_is_surveyed"] else "estimated bed"),
         "ready": False,
