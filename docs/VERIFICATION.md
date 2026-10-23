@@ -1,4 +1,6 @@
-# Verification record — 20 October 2026
+# Verification record — 22 October 2026
+
+The production build and 41 backend tests were repeated on 22 October. The recorded external-engine flood calculation was completed on 20 October; its immutable outputs are reused after hash verification.
 
 The follow-up has **41 passing backend tests**: 20 pipeline, five acquisition, four study/terrain, six screening integrity and six channel/initialization checks. The [data acquisition record](DATA_ACQUISITION.md) documents the actual inputs. The [computed upstream HEC-HMS study](STUDY_PROGRESS.md) has seven calibration and eight withheld observations; its validation NSE/KGE remain 0.678/0.462. The revised [LISFLOOD-FP case](SCREENING_MODEL.md) uses a 100 m mapped channel, explicitly estimated bed depths and a 72-hour river warm-up, excluded from its 384 published flood frames. The complete run passed convergence, wet-connectivity and numerical checks. Withheld NSE/KGE improved to **0.797/0.577**, with KGE still below 0.60; no accepted calibrated 2-D model or validated flood extent is claimed.
 
@@ -22,7 +24,7 @@ The follow-up has **41 passing backend tests**: 20 pipeline, five acquisition, f
 | LISFLOOD-FP 8.0.3 build and execution | Passed | Official archive MD5 verified; CPU/OpenMP executable reports version and executes 8×8 boundary test |
 | Actual Nowshera screening computation | Published, unvalidated | Continuous 72-hour warm-up plus 16-day flood; 457 native / 384 published frames; wet channel connected at playback start; numerical volume error 0.0003893%; withheld NSE/KGE 0.797/0.577; independent extent unavailable |
 
-The Python tests use small synthetic rasters and CSVs in temporary directories. The browser result test uses an explicitly synthetic UI fixture via a mocked API. None of these files are registered as Nowshera outputs.
+The Python tests use small synthetic rasters and CSVs in temporary directories. The generic browser result test uses an explicitly synthetic UI fixture via a mocked API; the prepared-case browser test uses the actual hash-verified local engine output. Synthetic fixtures are never registered as Nowshera study data.
 
 ## Installed LISFLOOD executable check
 
@@ -34,7 +36,7 @@ This establishes that the installed binary executes the selected solver on the s
 
 Desktop and 390-pixel mobile layouts were inspected. The station globe, mapped geographic context, study boundary, scenario editor, empty-output states and upstream connection cards render without horizontal page overflow. Tile completion is awaited in screenshot checks. Source imagery and terrain attribution are visible. A/B frames are selected by exact timestamp; unmatched times are shown explicitly. Model time, chart cursor and raster field selection share the same selected frame.
 
-The corrected public screening case was checked through real readiness, verified-result handoff, HTTP-successful computed water imagery, completed map tiles and advancing Play. Satellite/street layers are requested separately; slow online imagery falls back to bundled context with local terrain and computed flood rasters. Full basin outlines are opt-in. Browser and Python test files, transformation caches and npm downloads use the project drive because the system C: drive is full.
+The revised warmed-river case passed the desktop browser check on 22 October in 25.2 seconds: real readiness, verified-result handoff, successful initial and mid-period computed water imagery, completed map tiles and advancing Play. The initial screenshot shows water through the mapped river before the flood expands. Cached-output verification may take longer with a cold disk, so that browser check allows up to 120 seconds for handoff. Satellite/street layers are requested separately; slow imagery falls back during any loading period to bundled context with local terrain and computed flood rasters. Full basin outlines are opt-in. Browser and Python test files, transformation caches and npm downloads use the project drive because the system C: drive is full.
 
 The project uses ports 5174 and 8010 to avoid other applications. The river view now uses Esri satellite imagery, OSM as a map alternative and bundled geographic context as fallback. Downloaded FABDEM tiles are automatically served as real local heightmaps; without downloaded terrain or an explicit terrain configuration the globe remains an explicitly labeled ellipsoid. The camera focuses on mapped river water near Nowshera.
 

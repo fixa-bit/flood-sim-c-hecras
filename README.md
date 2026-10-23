@@ -19,7 +19,6 @@ The **Example scenarios** section above the river map loads two editable startin
 Choose **Load case values** to review/save the result, or **Prepare & run case** to validate, prepare its domain, check all prerequisites, and submit compute if ready. Missing requirements appear next to the runner; a blocked case never submits a job. Existing model bindings still apply only to their exact scenario and input hashes, so changing rainfall, dates, geometry or other values requires a matching prepared engine project. This automates input loading and preparation, not hydraulic model construction. Playback still requires published timestamped model rasters.
 
 **Engine for this run** lets you choose **HEC-RAS 2D** (full SWE) or **LISFLOOD-FP** (local inertial), overriding the engine in the selected case or JSON. Leave **Use engine from case or JSON** selected to preserve its engine. When a supplied public case is selected, choosing an engine selects its own prepared case, mesh and model settings. Custom drafts retain their inputs and require matching model preparation. Load the values to review the choice in **Hydraulic model → Compute engine**. For your own model, **Attach prepared model** accepts an absolute project folder, plan number (`01` for HEC-RAS) or parameter file (`screen.par` for LISFLOOD), and a model review reference. Attachment records the exact scenario, input hashes and engine. Both supplied public cases publish map rasters automatically; other projects need a documented raster exporter. Previously published public results are reused only after their raster and overlay hashes pass verification.
-
 Node 24+ and Python 3.11+ are required. From this checkout:
 
 ```powershell
@@ -28,6 +27,8 @@ Node 24+ and Python 3.11+ are required. From this checkout:
 ```
 
 Open **http://127.0.0.1:5174**. The API runs on **8010**; ports 5173/8000 may belong to other projects. Setup creates an isolated `.venv`, installs packages and Chromium, and keeps download caches and temporary files on the project drive. Installed dependencies are recorded in `server/requirements-lock.txt`. `server/requirements.txt` defines the supported top-level dependencies.
+
+To transfer the current installation, use the [data and engine transfer guide](requirement_data.txt) and [exact Python package snapshot](requirements.txt). Git carries source and configuration; the ignored `workspace/` data, engine installations and computed results need a separate transfer or reproduction.
 
 For separate terminals:
 

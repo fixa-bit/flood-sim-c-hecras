@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("the real prepared public case passes readiness and opens verified engine output for playback", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(180000);
   const prepared = await (await page.request.get("/api/prepared-cases")).json();
   test.skip(
     !prepared.length,
@@ -64,15 +64,17 @@ test("the real prepared public case passes readiness and opens verified engine o
       exact: true,
     }),
   ).toBeChecked();
-  const firstOverlayResponse = page.waitForResponse((response) =>
-    response.url().includes(`/outputs/${output.id}/00000-depth.png`),
+  const firstOverlayResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/outputs/${output.id}/00000-depth.png`),
+    { timeout: 120000 },
   );
   await runner
     .getByRole("button", { name: "Prepare & run case", exact: true })
     .click();
   await expect(
     page.getByRole("combobox", { name: "Result A", exact: true }),
-  ).toHaveValue(output.id, { timeout: 30000 });
+  ).toHaveValue(output.id, { timeout: 120000 });
   const play = page.getByRole("button", {
     name: "Play model output",
     exact: true,
