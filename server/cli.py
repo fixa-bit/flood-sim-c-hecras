@@ -7,9 +7,9 @@ import httpx
 import rasterio
 from .domain import bounds_for, clip_raster, geojson_geometry, prepare_domain
 from .models import Scenario
-from .publish import inspect_hdf, publish
+from .publish import inspect_hdf, publish, restyle_wse
 from .store import ROOT, assets, file_hash, write_json
-from .worker import bind, preflight
+from .worker import bind, preflight, prune_jobs
 from .hydrology import compute_hms
 
 KINDS = ["dem", "hydrography", "catchment", "soil", "moisture", "rainfall", "landcover", "inflow", "validation"]
@@ -80,6 +80,11 @@ def main():
     p.add_argument("--review", required=True, help="Review reference covering mesh, hydrology, structures, conditions and timestep")
     p = commands.add_parser("publish", help="Publish RAS Mapper / LISFLOOD raster exports using an export manifest")
     p.add_argument("manifest", type=Path)
+    p = commands.add_parser("restyle-wse", help="Redraw a published result's WSE overlays with bins fitted to its own range")
+    p.add_argument("result_id", nargs="+")
+    p = commands.add_parser("prune-jobs", help="List (or with --apply delete) job data no current result depends on")
+    p.add_argument("--older-than-days", type=float, default=14, help="Age before cache-hit job records are removed")
+    p.add_argument("--apply", action="store_true", help="Delete the listed items; default is a dry run")
     p = commands.add_parser("inspect-hdf")
     p.add_argument("path", type=Path)
     p = commands.add_parser("compute-hms", help="Run an existing reviewed HEC-HMS simulation using bundled Java/Jython")
@@ -121,6 +126,10 @@ def main():
             result = register(args.kind, temp, args.item_url, args.license, item["id"])
     elif args.command == "publish":
         result = publish(args.manifest)
+    elif args.command == "restyle-wse":
+        result = [restyle_wse(result_id) for result_id in args.result_id]
+    elif args.command == "prune-jobs":
+        result = prune_jobs(args.older_than_days, args.apply)
     else:
         result = inspect_hdf(args.path)
     print(json.dumps(result, indent=2, allow_nan=False))

@@ -1,5 +1,3 @@
-Run on Windows in PowerShell: `Set-ExecutionPolicy -Scope Process Bypass`, then `.\scripts\setup.ps1` and `.\scripts\dev.ps1`; open http://127.0.0.1:5174. The policy change applies only to the current PowerShell session.
-
 # Flood Simulation — Pakistan flood scenarios
 
 A local research workspace for upstream-first flood scenario preparation and georeferenced **external model output**. Nowshera is the first hydraulic pilot, with Warsak upstream and the Kabul–Indus connection at Attock downstream. Tarbela, Kohala, Akhnur and Marala are useful planning starting points. The full 29-station catalog is a reference; hydraulic compute stays limited to Nowshera until the pilot is proven.
@@ -8,30 +6,17 @@ A local research workspace for upstream-first flood scenario preparation and geo
 
 **Public input data have now been acquired:** FABDEM, WorldCover, HydroRIVERS, a candidate HydroBASINS catchment, SoilGrids, full-catchment CHIRPS rainfall, and 17 official FFC reports with review-required gauge transcriptions. See the [download inventory, file locations and remaining access requirements](docs/DATA_ACQUISITION.md). Raw inputs and sparse observations do not replace a calibrated model or independent validation.
 
-**A runnable public-data 2D screening case is available:** select **Load runnable public case → Prepare & run case → Play**. The revised case uses a 100 m grid, a mapped river corridor with explicitly estimated bed depths, and 72 hours of steady-flow initialization before the displayed flood period. The external LISFLOOD-FP engine retains flow and depth continuously; warm-up frames are excluded from playback. Publication requires converged river flow, wet inlet-to-outlet connectivity and numerical checks. Surveyed bathymetry and independent flood-extent validation remain unavailable. See [model inputs, actual checks and reproduction](docs/SCREENING_MODEL.md). The original HEC-RAS example still requires its own prepared RAS project.
+## Quick start (Windows)
 
-## Run on Windows
-
-**A separate HEC-RAS 2D case is also available:** select **Load runnable HEC-RAS case → Prepare & run case → Play**. It uses HEC-RAS 6.6's full SWE-ELM solver, the existing HEC-HMS inflow, a 200 m mesh, estimated channel terrain, and 72 hours of initialization. Its full event has been computed and published as 385 hourly frames. See [HEC-RAS inputs, numerical checks, limitations and reproduction](docs/HECRAS_MODEL.md). Both engines have separate prepared cases and results; neither case is calibrated or independently validated.
-
-The **Example scenarios** section above the river map loads two editable starting points: **Nowshera 2022** with upstream gauge boundaries, and **Wetter monsoon +30%** with saturated soil. Each has a separate draft ID and can be saved or exported as JSON. They load scenario inputs; hydraulic compute still requires the data and prepared model to pass readiness checks.
-
-**Run a scenario case** applies a case without filling each editor field. Select the current scenario, an example, or a saved draft; optionally choose a JSON file or expand **Paste or adjust case values**. A full exported scenario replaces the base. A partial object such as `{"name":"Wetter test","forcing":{"rainfall_multiplier":1.5}}` overlays those nested fields on the selected base; arrays replace entire lists. Unspecified values are inherited, not inferred from prose. The server rejects invalid or unknown fields before changing the editor. A null DEM hash uses the registered terrain; explicit hashes remain unchanged.
-
-Choose **Load case values** to review/save the result, or **Prepare & run case** to validate, prepare its domain, check all prerequisites, and submit compute if ready. Missing requirements appear next to the runner; a blocked case never submits a job. Existing model bindings still apply only to their exact scenario and input hashes, so changing rainfall, dates, geometry or other values requires a matching prepared engine project. This automates input loading and preparation, not hydraulic model construction. Playback still requires published timestamped model rasters.
-
-**Engine for this run** lets you choose **HEC-RAS 2D** (full SWE) or **LISFLOOD-FP** (local inertial), overriding the engine in the selected case or JSON. Leave **Use engine from case or JSON** selected to preserve its engine. When a supplied public case is selected, choosing an engine selects its own prepared case, mesh and model settings. Custom drafts retain their inputs and require matching model preparation. Load the values to review the choice in **Hydraulic model → Compute engine**. For your own model, **Attach prepared model** accepts an absolute project folder, plan number (`01` for HEC-RAS) or parameter file (`screen.par` for LISFLOOD), and a model review reference. Attachment records the exact scenario, input hashes and engine. Both supplied public cases publish map rasters automatically; other projects need a documented raster exporter. Previously published public results are reused only after their raster and overlay hashes pass verification.
-Node 24+ and Python 3.11+ are required. From this checkout:
+Node 24+ and Python 3.11+ are required. In PowerShell, from this checkout:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\setup.ps1
-.\scripts\dev.ps1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # current PowerShell session only
+.\scripts\setup.ps1   # first time: .venv, Python/Node packages, Chromium
+.\scripts\dev.ps1     # starts the API (8010) and the app (5174)
 ```
 
-Open **http://127.0.0.1:5174**. The API runs on **8010**; ports 5173/8000 may belong to other projects. Setup creates an isolated `.venv`, installs packages and Chromium, and keeps download caches and temporary files on the project drive. Installed dependencies are recorded in `server/requirements-lock.txt`. `server/requirements.txt` defines the supported top-level dependencies.
-
-To transfer the current installation, use the [data and engine transfer guide](requirement_data.txt) and [exact Python package snapshot](requirements.txt). Git carries source and configuration; the ignored `workspace/` data, engine installations and computed results need a separate transfer or reproduction.
+Open **http://127.0.0.1:5174**. The API runs on **8010**; ports 5173/8000 may belong to other projects. Setup creates an isolated `.venv`, installs packages and Chromium, and keeps download caches and temporary files on the project drive. `server/requirements.txt` defines the supported top-level dependencies; `requirements.txt` is the exact installed package snapshot.
 
 For separate terminals:
 
@@ -41,6 +26,30 @@ npm run dev -- --host 127.0.0.1
 ```
 
 The local API is designed for loopback use, not public hosting. Browser drafts live in localStorage. Scientific inputs, engine projects and outputs live under ignored `workspace/`; export the JSON scenario for reproducibility. Large source datasets and licensed inputs do not belong in Git.
+
+To transfer the current installation, use the [data and engine transfer guide](requirement_data.txt) and [exact Python package snapshot](requirements.txt). Git carries source and configuration; the ignored `workspace/` data, engine installations and computed results need a separate transfer or reproduction.
+
+## Using the app
+
+### Runnable public cases
+
+**A runnable public-data 2D screening case is available:** select **Load runnable public case → Prepare & run case → Play**. The revised case uses a 100 m grid, a mapped river corridor with explicitly estimated bed depths, and 72 hours of steady-flow initialization before the displayed flood period. The external LISFLOOD-FP engine retains flow and depth continuously; warm-up frames are excluded from playback. Publication requires converged river flow, wet inlet-to-outlet connectivity and numerical checks. Surveyed bathymetry and independent flood-extent validation remain unavailable. See [model inputs, actual checks and reproduction](docs/SCREENING_MODEL.md). The original HEC-RAS example still requires its own prepared RAS project.
+
+**A separate HEC-RAS 2D case is also available:** select **Load runnable HEC-RAS case → Prepare & run case → Play**. It uses HEC-RAS 6.6's full SWE-ELM solver, the existing HEC-HMS inflow, a 200 m mesh, estimated channel terrain, and 72 hours of initialization. Its full event has been computed and published as 385 hourly frames. See [HEC-RAS inputs, numerical checks, limitations and reproduction](docs/HECRAS_MODEL.md). Both engines have separate prepared cases and results; neither case is calibrated or independently validated.
+
+### Example scenarios
+
+The **Example scenarios** section above the river map loads two editable starting points: **Nowshera 2022** with upstream gauge boundaries, and **Wetter monsoon +30%** with saturated soil. Each has a separate draft ID and can be saved or exported as JSON. They load scenario inputs; hydraulic compute still requires the data and prepared model to pass readiness checks.
+
+### Run a scenario case
+
+**Run a scenario case** applies a case without filling each editor field. Select the current scenario, an example, or a saved draft; optionally choose a JSON file or expand **Paste or adjust case values**. A full exported scenario replaces the base. A partial object such as `{"name":"Wetter test","forcing":{"rainfall_multiplier":1.5}}` overlays those nested fields on the selected base; arrays replace entire lists. Unspecified values are inherited, not inferred from prose. The server rejects invalid or unknown fields before changing the editor. A null DEM hash uses the registered terrain; explicit hashes remain unchanged.
+
+Choose **Load case values** to review/save the result, or **Prepare & run case** to validate, prepare its domain, check all prerequisites, and submit compute if ready. Missing requirements appear next to the runner; a blocked case never submits a job. Existing model bindings still apply only to their exact scenario and input hashes, so changing rainfall, dates, geometry or other values requires a matching prepared engine project. This automates input loading and preparation, not hydraulic model construction. Playback still requires published timestamped model rasters.
+
+### Engine choice and your own model
+
+**Engine for this run** lets you choose **HEC-RAS 2D** (full SWE) or **LISFLOOD-FP** (local inertial), overriding the engine in the selected case or JSON. Leave **Use engine from case or JSON** selected to preserve its engine. When a supplied public case is selected, choosing an engine selects its own prepared case, mesh and model settings. Custom drafts retain their inputs and require matching model preparation. Load the values to review the choice in **Hydraulic model → Compute engine**. For your own model, **Attach prepared model** accepts an absolute project folder, plan number (`01` for HEC-RAS) or parameter file (`screen.par` for LISFLOOD), and a model review reference. Attachment records the exact scenario, input hashes and engine. Both supplied public cases publish map rasters automatically; other projects need a documented raster exporter. Previously published public results are reused only after their raster and overlay hashes pass verification.
 
 ## What is installed in this environment
 
@@ -170,20 +179,37 @@ Publication checks scenario/terrain/engine agreement, SI declarations, timestamp
 
 Refresh the workspace, select **Model results**, choose HEC-RAS as **Result A** and LISFLOOD as **Compare B**. The default comparison requires exact timestamps. For the supplied cases choose **Compare times → Nearest frame within 60 seconds**, since LISFLOOD's adaptive steps produce timestamps a few seconds after the hour. The A/B split slider compares the original rasters on the same map; actual A/B timestamps and the signed offset are shown beneath it. No temporal interpolation or retimestamping is performed, and a frame farther than 60 seconds away remains missing. The main timeline and hydrograph follow A. Imported uncertainty bounds are displayed without inventing an ensemble. The viewer renders depth/WSE/speed rasters and never computes water. The supplied cases differ in mesh spacing, roughness and boundary extent; their differences are not solely an engine comparison.
 
+**Playback controls:** choose **1× / 4× / 16×** beside the timeline (1× shows one frame every 0.8 s). When focus is not in a form field, **Space** plays or pauses, **← / →** step one frame and **Shift + ← / →** step ten. Depth and speed use fixed legend bins. Water-surface (WSE) bins are fitted to each result: five equal classes across the 2nd–98th percentile of its WSE values, stored as `legend` in the result manifest. Results published before this change keep fixed WSE bins until restyled (see Maintenance).
+
 Without terrain configuration the globe explicitly uses an ellipsoid. Optional `VITE_CESIUM_ION_TOKEN` enables World Terrain as **context only**. `VITE_LOCAL_TERRAIN_URL` should point to quantized-mesh terrain built from the same prepared FABDEM clip; automatic terrain tiling is a remaining integration. Copy `.env.example` to `.env` and restart Vite. Keep credentials out of Git.
 
 ## Checks
 
 ```powershell
+npx oxlint
 npm run build
-$env:TEMP = Join-Path (Get-Location) 'workspace\temp'
-$env:TMP = $env:TEMP
-.\.venv\Scripts\python.exe -m pytest tests\test_pipeline.py -q
+.\.venv\Scripts\python.exe -m pytest   # all Python tests; temp files stay under workspace\temp
 # With the app and API running:
 npm test
 ```
 
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint, the production build and the Python tests on pushes to `main` and on pull requests. The Python tests need no `workspace/` data. Browser tests use the local workspace and engines, so they run locally only.
+
 Tests use temporary **synthetic fixtures** and mocked imagery solely to test contracts and interaction. They do not constitute a Pakistan flood simulation, a benchmark validation, or a historical replay. No test output is shipped as real research data.
+
+## Maintenance
+
+```powershell
+python -m server.cli restyle-wse <result-id> [<result-id> ...]
+python -m server.cli prune-jobs              # dry run: lists what would be removed
+python -m server.cli prune-jobs --apply
+```
+
+`restyle-wse` redraws a published result's WSE overlays with bins fitted to its own range. It first verifies every original GeoTIFF hash, changes only the derived PNGs, their hashes and the manifest `legend`, and leaves the rasters untouched.
+
+`prune-jobs` removes job data that no current result depends on: engine copies (`model/`) whose published result is superseded or missing, and cache-hit job records older than `--older-than-days` (default 14). It never touches queued or running jobs, unpublished `computed` or `failed` jobs, or any job ID cited in `docs/`. Without `--apply` it only reports.
+
+If the API stops while a job is queued or running, that job is marked `failed` at the next API start, with a note to resubmit.
 
 ## Public-data follow-up
 

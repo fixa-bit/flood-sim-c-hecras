@@ -318,7 +318,9 @@ def main():
         parser.error("Unknown provider; choose from " + ", ".join(TASKS))
     BASE.mkdir(parents=True, exist_ok=True)
     report_path = BASE / "acquisition.json"
-    report = read_json(report_path, {"searched_directory": "D:/Projects/flood simulator", "local_model_or_data_files_found": 0, "providers": {}})
+    # A new report records only what this run does; an existing report keeps
+    # any earlier local-search record it already contains.
+    report = read_json(report_path, {"providers": {}})
     report["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     def record_provider(key, result=None, error=None):

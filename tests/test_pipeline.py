@@ -187,6 +187,49 @@ def test_publish_real_raster_pipeline_without_fake_validation(isolated, scenario
     assert (isolated / "results" / result["id"] / "00000-depth.tif").is_file()
 
 
+def test_wse_overlay_bins_fit_the_event_range(isolated, scenario):
+    s = seed(isolated, scenario)
+    path, spec = export_manifest(isolated, s)
+    # A narrow valley reach: every value would fall into one fixed 100-300 m bin.
+    levels = np.linspace(285, 292, 100 * 100).reshape(100, 100)
+    raster(isolated / "wse.tif", values=levels)
+    spec["frames"][0]["wse"] = "wse.tif"
+    write_json(path, spec)
+    result = publish.publish(path)
+    edges = result["legend"]["wse"]
+    assert len(edges) == 4 and 285 < edges[0] < edges[-1] < 292
+    from PIL import Image
+    pixels = np.asarray(Image.open(isolated / "results" / result["id"] / "00000-wse.png")).reshape(-1, 4)
+    colours = {tuple(pixel) for pixel in pixels if pixel[3]}
+    assert len(colours) == 5
+    assert result["legend"]["depth"] == publish.FIELD_EDGES["depth"]
+
+
+def test_restyle_wse_updates_only_overlays_and_hashes(isolated, scenario):
+    s = seed(isolated, scenario)
+    path, spec = export_manifest(isolated, s)
+    raster(isolated / "wse.tif", values=np.linspace(285, 292, 100 * 100).reshape(100, 100))
+    spec["frames"][0]["wse"] = "wse.tif"
+    write_json(path, spec)
+    result = publish.publish(path)
+    folder = isolated / "results" / result["id"]
+    # Simulate a manifest published with the old fixed bins.
+    old = store.read_json(folder / "manifest.json")
+    old.pop("legend")
+    publish.raster_overlay(folder / "00000-wse.tif", folder / "00000-wse.png", "wse")
+    old["frames"][0]["fields"]["wse"]["overlay_sha256"] = file_hash(folder / "00000-wse.png")
+    write_json(folder / "manifest.json", old)
+    original = file_hash(folder / "00000-wse.tif")
+    summary = publish.restyle_wse(result["id"])
+    restyled = store.read_json(folder / "manifest.json")
+    assert summary["frames"] == 1 and restyled["legend"]["wse"] == summary["wse_edges"]
+    assert file_hash(folder / "00000-wse.tif") == original
+    assert restyled["frames"][0]["fields"]["wse"]["overlay_sha256"] == file_hash(folder / "00000-wse.png")
+    (folder / "00000-wse.tif").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="missing or changed"):
+        publish.restyle_wse(result["id"])
+
+
 def test_validation_requires_all_named_gauges_and_independent_extent(isolated, scenario):
     s = seed(isolated, scenario)
     path, spec = export_manifest(isolated, s)
@@ -229,6 +272,78 @@ def test_api_schema_rejects_bad_scenarios_and_cross_origin(isolated, scenario, m
         assert client.post("/api/jobs", json=scenario.model_dump(mode="json")).status_code == 409
         assert client.post("/api/domain", json={}, headers={"Origin": "https://unrelated.example"}).status_code == 403
         assert client.post("/api/scenarios/validate", json={"schema_version": 9}).status_code == 422
+
+
+def test_results_list_summaries_and_serve_full_detail(isolated, monkeypatch):
+    module = importlib.import_module("server.app")
+    monkeypatch.setattr(module, "ROOT", isolated)
+    frames = [{"time": f"2022-08-20T0{i}:00:00Z", "fields": {}} for i in range(3)]
+    write_json(isolated / "results" / "current" / "manifest.json", {"id": "current", "frames": frames, "hydrographs": [{"station_id": "x"}]})
+    write_json(isolated / "results" / "old" / "manifest.json", {"id": "old", "frames": [], "superseded_by": "current"})
+    with TestClient(module.app) as client:
+        listing = client.get("/api/results").json()
+        assert listing == [{"id": "current", "frame_count": 3}]
+        detail = client.get("/api/results/current").json()
+        assert detail["frames"] == frames and detail["hydrographs"] == [{"station_id": "x"}]
+        assert client.get("/api/results/missing").status_code == 404
+        assert client.get("/api/results/..%2F..%2Fassets").status_code in {404, 422}
+
+
+def test_startup_fails_jobs_interrupted_by_a_previous_process(isolated, monkeypatch):
+    for job_id, state in [("1" * 32, "running"), ("2" * 32, "queued"), ("3" * 32, "published")]:
+        write_json(isolated / "jobs" / job_id / "status.json", {"id": job_id, "state": state})
+    module = importlib.import_module("server.app")
+    monkeypatch.setattr(module, "ROOT", isolated)
+    with TestClient(module.app) as client:
+        running = client.get(f"/api/jobs/{'1' * 32}").json()
+        assert running["state"] == "failed" and running["interrupted_state"] == "running"
+        assert client.get(f"/api/jobs/{'2' * 32}").json()["state"] == "failed"
+        assert client.get(f"/api/jobs/{'3' * 32}").json()["state"] == "published"
+
+
+def test_failed_job_creation_releases_the_compute_lock(isolated, scenario, monkeypatch):
+    module = importlib.import_module("server.app")
+    monkeypatch.setattr(module, "ROOT", isolated)
+    monkeypatch.setattr(module, "preflight", lambda s: {"ready": True, "scenario_sha256": "f" * 64, "checks": []})
+    monkeypatch.setattr(module, "background_compute", lambda s, job_id: module.compute_lock.release())
+    def failing_write(path, value):
+        raise OSError("disk full")
+    monkeypatch.setattr(module, "write_json", failing_write)
+    payload = scenario.model_dump(mode="json")
+    with TestClient(module.app, raise_server_exceptions=False) as client:
+        assert client.post("/api/jobs", json=payload).status_code == 500
+        assert not module.compute_lock.locked()
+        monkeypatch.setattr(module, "write_json", write_json)
+        assert client.post("/api/jobs", json=payload).status_code == 202
+    assert not module.compute_lock.locked()
+
+
+def test_prune_jobs_keeps_current_and_cited_runs(isolated, monkeypatch):
+    import os
+    docs = isolated / "docs"
+    docs.mkdir()
+    (docs / "RUN.md").write_text("The native run is under workspace/jobs/" + "c" * 32 + "/.")
+    monkeypatch.setattr(worker, "DOCS", docs)
+    write_json(isolated / "results" / "current" / "manifest.json", {"id": "current"})
+    write_json(isolated / "results" / "old" / "manifest.json", {"id": "old", "superseded_by": "current"})
+    jobs = {"a" * 32: ("published", "current", True), "b" * 32: ("published", "old", True), "c" * 32: ("published", "old", True),
+            "d" * 32: ("published", "current", False), "e" * 32: ("running", None, True), "f" * 32: ("computed", None, True)}
+    for job_id, (state, result_id, has_model) in jobs.items():
+        write_json(isolated / "jobs" / job_id / "status.json", {"id": job_id, "state": state, "result_id": result_id})
+        if has_model:
+            (isolated / "jobs" / job_id / "model").mkdir()
+            (isolated / "jobs" / job_id / "model" / "out.bin").write_bytes(b"x" * 1000)
+    old = (isolated / "jobs" / ("d" * 32) / "status.json")
+    os.utime(old, (old.stat().st_mtime - 30 * 86400,) * 2)
+    plan = worker.prune_jobs(older_than_days=14)
+    assert {(item["job"][0], item["remove"]) for item in plan["items"]} == {("b", "model/"), ("d", "job record")}
+    assert (isolated / "jobs" / ("b" * 32) / "model").is_dir(), "dry run must not delete"
+    worker.prune_jobs(older_than_days=14, apply=True)
+    assert not (isolated / "jobs" / ("b" * 32) / "model").exists()
+    assert (isolated / "jobs" / ("b" * 32) / "status.json").is_file()
+    assert not (isolated / "jobs" / ("d" * 32)).exists()
+    for kept in "acef":
+        assert (isolated / "jobs" / (kept * 32) / "model").is_dir() or kept == "d"
 
 
 @pytest.mark.parametrize("engine,plan", [("HEC-RAS 2D", "01"), ("LISFLOOD-FP", "screen.par")])

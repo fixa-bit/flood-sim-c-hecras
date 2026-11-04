@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Cartesian2,
   Cartesian3,
@@ -69,7 +69,16 @@ export default function Globe({
   const [flat, setFlat] = useState(false);
   const [aerial, setAerial] = useState(true);
   const [basemapFallback, setBasemapFallback] = useState(false);
-  const [riverContext, setRiverContext] = useState<RiverContext>();
+  const { lat: outletLat, lon: outletLon, station_id: outletStation } =
+    scenario.outlet;
+  const radiusKm = scenario.domain.radius_km;
+  const riverKey = `${outletLon},${outletLat}`;
+  const [riverFor, setRiverFor] = useState<{
+    key: string;
+    value: RiverContext;
+  }>();
+  // Context fetched for an earlier outlet is never shown for the current one.
+  const riverContext = riverFor?.key === riverKey ? riverFor.value : undefined;
   const [riverView, setRiverView] = useState(true);
   const [showRivers, setShowRivers] = useState(false);
   const [showBasin, setShowBasin] = useState(false);
@@ -77,8 +86,10 @@ export default function Globe({
   const aerialLayer = useRef<ImageryLayer | null>(null);
   const streetLayer = useRef<ImageryLayer | null>(null);
   const aerialChoice = useRef(aerial);
-  aerialChoice.current = aerial;
-  select.current = onStation;
+  useLayoutEffect(() => {
+    aerialChoice.current = aerial;
+    select.current = onStation;
+  });
 
   useEffect(() => {
     if (!container.current) return;
@@ -299,6 +310,9 @@ export default function Globe({
         if (entity && STATIONS.some((s) => s.id === entity.id))
           select.current(entity.id);
       });
+      // The Cesium viewer is an external system created in this effect;
+      // dependent effects must re-run once it exists.
+      // oxlint-disable-next-line react/set-state-in-effect
       setReady(true);
     } catch {
       setError(
@@ -317,16 +331,15 @@ export default function Globe({
 
   useEffect(() => {
     const controller = new AbortController();
-    setRiverContext(undefined);
-    void fetch(
-      `/api/river-context?lon=${scenario.outlet.lon}&lat=${scenario.outlet.lat}`,
-      { signal: controller.signal },
-    )
+    const [lon, lat] = riverKey.split(",");
+    void fetch(`/api/river-context?lon=${lon}&lat=${lat}`, {
+      signal: controller.signal,
+    })
       .then((response) => response.json())
-      .then(setRiverContext)
+      .then((value: RiverContext) => setRiverFor({ key: riverKey, value }))
       .catch(() => {});
     return () => controller.abort();
-  }, [scenario.outlet.lon, scenario.outlet.lat]);
+  }, [riverKey]);
 
   useEffect(() => {
     const v = viewer.current;
@@ -384,7 +397,10 @@ export default function Globe({
     const v = viewer.current;
     if (!ready || !v) return;
     v.camera.cancelFlight();
-    const [west, south, east, north] = boundsFor(scenario);
+    const [west, south, east, north] = boundsFor({
+      outlet: { lat: outletLat, lon: outletLon },
+      domain: { radius_km: radiusKm },
+    });
     v.entities.removeById("analysis-domain");
     v.entities.removeById("custom-outlet");
     v.entities.removeById("snapped-outlet");
@@ -398,12 +414,12 @@ export default function Globe({
         outlineWidth: 2,
       },
     });
-    if (!scenario.outlet.station_id)
+    if (!outletStation)
       v.entities.add({
         id: "custom-outlet",
         position: Cartesian3.fromDegrees(
-          scenario.outlet.lon,
-          scenario.outlet.lat,
+          outletLon,
+          outletLat,
         ),
         point: { pixelSize: 12, color: Color.ORANGE },
       });
@@ -431,19 +447,19 @@ export default function Globe({
     } else
       v.camera.flyTo({
         destination: Cartesian3.fromDegrees(
-          scenario.outlet.lon,
-          scenario.outlet.lat - 0.1,
-          scenario.domain.radius_km * 8000,
+          outletLon,
+          outletLat - 0.1,
+          radiusKm * 8000,
         ),
         orientation: { heading: 0, pitch: CesiumMath.toRadians(-75), roll: 0 },
         duration: 0.8,
       });
   }, [
     ready,
-    scenario.outlet.lat,
-    scenario.outlet.lon,
-    scenario.outlet.station_id,
-    scenario.domain.radius_km,
+    outletLat,
+    outletLon,
+    outletStation,
+    radiusKm,
     domain,
     riverContext,
     riverView,

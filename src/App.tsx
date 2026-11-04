@@ -1,46 +1,59 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { STATIONS, STATION_BY_ID } from "./data/stations";
 import {
-  downstreamOf,
-  PILOT_ID,
-  STARTING_STATIONS,
-  stationNames,
-  upstreamOf,
-} from "./data/network";
-import {
-  applyPreset,
-  defaultScenarioFor,
-  KIND_LABELS,
-  lakhToM3s,
-  scenarioErrors,
-} from "./data/scenarios";
-import type { Scenario, ScenarioKind } from "./data/scenarios";
-import { SOURCES } from "./data/sources";
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { STATION_BY_ID } from "./data/stations";
+import { downstreamOf, PILOT_ID, upstreamOf } from "./data/network";
+import { defaultScenarioFor, scenarioErrors } from "./data/scenarios";
+import type { Scenario } from "./data/scenarios";
 import { EXAMPLE_SCENARIOS, exampleScenario } from "./data/examples";
 import type { ExampleId } from "./data/examples";
-import { api, download } from "./lib/api";
+import { api, CancelledError, download } from "./lib/api";
 import type {
   Asset,
   DomainResult,
   Health,
   Preflight,
   PreparedCase,
-  Result,
+  ResultSummary,
 } from "./lib/api";
-import { Hydrograph } from "./components/Hydrograph";
-import { StudyPanel } from "./components/StudyPanel";
-import { ScenarioCaseRunner } from "./components/ScenarioCaseRunner";
-import { ModelBindingForm } from "./components/ModelBindingForm";
-import type { CaseOutcome } from "./components/ScenarioCaseRunner";
+import type { Field } from "./lib/legend";
 import { scenarioCaseValues } from "./lib/scenarioCase";
 import { sameScenario } from "./lib/scenarioMatch";
 import { comparisonFrame as findComparisonFrame } from "./lib/comparison";
+import { usePlayback } from "./hooks/usePlayback";
+import { useResultDetails } from "./hooks/useResultDetails";
+import { isActive, useJobPolling } from "./hooks/useJobPolling";
+import type { Job } from "./hooks/useJobPolling";
+import { Hydrograph } from "./components/Hydrograph";
+import { ScenarioCaseRunner } from "./components/ScenarioCaseRunner";
+import type { CaseOutcome } from "./components/ScenarioCaseRunner";
+import { StationCatalog } from "./components/StationCatalog";
+import { NetworkSummary } from "./components/NetworkSummary";
+import {
+  MapLegend,
+  PlaybackBar,
+  ResultDetails,
+  ResultPicker,
+} from "./components/ResultControls";
+import type { ComparisonTiming } from "./components/ResultControls";
+import { DataView } from "./components/DataView";
+import { VerificationView } from "./components/VerificationView";
+import { ScenarioEditor } from "./components/ScenarioEditor";
 import "./App.css";
 
 const Globe = lazy(() => import("./components/Globe"));
 type Tab = "scenario" | "data" | "verification";
 const STORAGE = "indus-lab-scenario-v1";
 const LIBRARY = "indus-lab-library-v1";
+/** A server answer that belongs to one exact scenario draft. */
+type ForScenario<T> = { scenario: Scenario; value: T };
+
 function initialScenario(): Scenario {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
@@ -61,37 +74,37 @@ function initialScenario(): Scenario {
   }
   return defaultScenarioFor(STATION_BY_ID[PILOT_ID]);
 }
-const fmt = (n: number | null | undefined, digits = 2) =>
-  n == null ? "—" : n.toFixed(digits);
-const utc = (time?: string) =>
-  time
-    ? `${new Date(time).toISOString().slice(0, 16).replace("T", " ")} UTC`
-    : "No model output";
+const REFRESH_TIMEOUT_MS = 30_000;
+const refreshTimeout = () => AbortSignal.timeout(REFRESH_TIMEOUT_MS);
+/** Returns false when browser storage is unavailable or full. */
+function persistDraft(scenario: Scenario) {
+  try {
+    localStorage.setItem(STORAGE, JSON.stringify(scenario));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function App() {
   const [scenario, setScenario] = useState<Scenario>(initialScenario);
   const [tab, setTab] = useState<Tab>("scenario");
   const [view, setView] = useState<"planning" | "results">("planning");
-  const [query, setQuery] = useState("");
-  const [allStations, setAllStations] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [assets, setAssets] = useState<Record<string, Asset>>({});
-  const [results, setResults] = useState<Result[]>([]);
+  const [results, setResults] = useState<ResultSummary[]>([]);
   const [preparedCases, setPreparedCases] = useState<PreparedCase[]>([]);
   const [resultId, setResultId] = useState("");
   const [compareId, setCompareId] = useState("");
-  const [comparisonTiming, setComparisonTiming] = useState<"exact" | "nearby">(
-    "exact",
-  );
-  const [domain, setDomain] = useState<DomainResult>();
-  const [preflight, setPreflight] = useState<Preflight>();
+  const [comparisonTiming, setComparisonTiming] =
+    useState<ComparisonTiming>("exact");
+  const [domainFor, setDomainFor] = useState<ForScenario<DomainResult>>();
+  const [preflightFor, setPreflightFor] = useState<ForScenario<Preflight>>();
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [caseOutcome, setCaseOutcome] = useState<CaseOutcome>();
-  const [frameIndex, setFrameIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [field, setField] = useState<"depth" | "wse" | "velocity">("depth");
+  const [field, setField] = useState<Field>("depth");
   const [showObserved, setShowObserved] = useState(false);
   const [library, setLibrary] = useState<Scenario[]>(() => {
     try {
@@ -100,17 +113,19 @@ function App() {
       return [];
     }
   });
-  const [job, setJob] = useState<{
-    id: string;
-    state: string;
-    detail?: string;
-    result_id?: string;
-  }>();
-  const jobId = job?.id;
-  const jobState = job?.state;
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [job, setJob] = useJobPolling(setMessage);
+  const abort = useRef<AbortController>(undefined);
+  const [cancellable, setCancellable] = useState(false);
   const scenarioRef = useRef(scenario);
-  scenarioRef.current = scenario;
+  useLayoutEffect(() => {
+    scenarioRef.current = scenario;
+  }, [scenario]);
+
+  // Domain and readiness answers apply only to the draft they were computed for.
+  const domain =
+    domainFor?.scenario === scenario ? domainFor.value : undefined;
+  const preflight =
+    preflightFor?.scenario === scenario ? preflightFor.value : undefined;
   const exampleCases = useMemo(
     () =>
       EXAMPLE_SCENARIOS.map((item) => ({
@@ -148,103 +163,38 @@ function App() {
     ]),
   ];
   const errors = scenarioErrors(scenario);
-  const result = results.find((r) => r.id === resultId);
-  const comparing = results.find((r) => r.id === compareId);
-  const frame = result?.frames[frameIndex];
+  const details = useResultDetails([resultId, compareId], results, setMessage);
+  const resultSummary = results.find((r) => r.id === resultId);
+  const result = details[resultId];
+  const comparing = details[compareId];
+  const showResults = view === "results" && !!result;
+  const loadingResult = view === "results" && !!resultSummary && !result;
+  const playback = usePlayback(result?.frames.length ?? 0, showResults);
+  const { rewind, stop } = playback;
+  const frame = result?.frames[playback.frameIndex];
   const comparisonFrame = findComparisonFrame(
     comparing?.frames ?? [],
     frame?.time,
     comparisonTiming === "nearby" ? 60 : 0,
   );
-  const comparisonOffset =
-    comparisonFrame && frame
-      ? (Date.parse(comparisonFrame.time) - Date.parse(frame.time)) / 1000
-      : undefined;
   const graph = result?.hydrographs.find(
     (g) => g.station_id === result.scenario.outlet.station_id,
   );
-  const showResults = view === "results" && !!result;
   const scoreTargets = result?.scenario.validation ?? scenario.validation;
   const mapScenario = showResults ? result.scenario : scenario;
-  const visibleStations = STATIONS.filter(
-    (s) =>
-      (allStations || STARTING_STATIONS.includes(s.id)) &&
-      `${s.name} ${s.riverName}`.toLowerCase().includes(query.toLowerCase()),
-  ).sort(
-    (a, b) =>
-      (STARTING_STATIONS.indexOf(a.id) < 0
-        ? 100
-        : STARTING_STATIONS.indexOf(a.id)) -
-      (STARTING_STATIONS.indexOf(b.id) < 0
-        ? 100
-        : STARTING_STATIONS.indexOf(b.id)),
-  );
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE, JSON.stringify(scenario));
-    } catch {
-      setNotice(
-        "Browser storage is full. Export the scenario to preserve changes.",
-      );
-    }
-  }, [scenario]);
-  useEffect(() => {
-    setDomain(undefined);
-    setPreflight(undefined);
-    setPlaying(false);
-  }, [scenario]);
-  useEffect(() => {
-    if (!playing || !result) return;
-    const timer = setInterval(
-      () =>
-        setFrameIndex((index) => {
-          if (index >= result.frames.length - 1) {
-            setPlaying(false);
-            return index;
-          }
-          return index + 1;
-        }),
-      800,
-    );
-    return () => clearInterval(timer);
-  }, [playing, result]);
-  useEffect(() => {
-    if (!jobId || !jobState || !["queued", "running"].includes(jobState))
-      return;
-    let active = true;
-    const poll = () => {
-      void api<NonNullable<typeof job>>(`jobs/${jobId}`)
-        .then((next) => {
-          if (active) setJob(next);
-        })
-        .catch((e) => {
-          if (active) setMessage(e.message);
-        });
-    };
-    poll();
-    const timer = setInterval(poll, 3000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [jobId, jobState]);
-  useEffect(() => {
-    void refresh();
-  }, []);
   useEffect(() => {
     if (job?.state !== "published" || !job.result_id) return;
     let active = true;
-    void api<Result[]>("results")
+    void api<ResultSummary[]>("results")
       .then((published) => {
         if (!active) return;
         setResults(published);
         const output = published.find((item) => item.id === job.result_id);
         if (output && sameScenario(output.scenario, scenarioRef.current)) {
           setResultId(output.id);
-          setFrameIndex(0);
+          rewind();
           setField("depth");
-          setPlaying(false);
           setView("results");
           setCaseOutcome({
             state: "loaded",
@@ -256,15 +206,21 @@ function App() {
     return () => {
       active = false;
     };
-  }, [job?.state, job?.result_id]);
+  }, [job?.state, job?.result_id, rewind]);
 
   async function refresh() {
     try {
       const [h, a, r, prepared] = await Promise.all([
-        api<Health>("health"),
-        api<Record<string, Asset>>("assets"),
-        api<Result[]>("results"),
-        api<PreparedCase[]>("prepared-cases").catch(() => []),
+        api<Health>("health", undefined, { signal: refreshTimeout() }),
+        api<Record<string, Asset>>("assets", undefined, {
+          signal: refreshTimeout(),
+        }),
+        api<ResultSummary[]>("results", undefined, {
+          signal: refreshTimeout(),
+        }),
+        api<PreparedCase[]>("prepared-cases", undefined, {
+          signal: refreshTimeout(),
+        }).catch(() => []),
       ]);
       setHealth(h);
       setAssets(a);
@@ -272,32 +228,45 @@ function App() {
       setPreparedCases(prepared);
       const current = scenarioRef.current;
       const output = r.find(
-        (item) => item.frames.length && sameScenario(item.scenario, current),
+        (item) => item.frame_count && sameScenario(item.scenario, current),
       );
       if (output) openOutput(output);
-      if (a.dem)
-        setScenario((s) =>
-          s.domain.dem_sha256 === a.dem.sha256
-            ? s
-            : { ...s, domain: { ...s.domain, dem_sha256: a.dem.sha256 } },
-        );
+      if (a.dem && current.domain.dem_sha256 !== a.dem.sha256) {
+        const next = {
+          ...current,
+          domain: { ...current.domain, dem_sha256: a.dem.sha256 },
+        };
+        scenarioRef.current = next;
+        setScenario(next);
+        persistDraft(next);
+      }
     } catch {
       setHealth(null);
     }
   }
+  useEffect(() => {
+    void refresh();
+    // Load the workspace once on mount; later refreshes are user-initiated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const update = (next: Scenario) => {
     scenarioRef.current = next;
     setScenario(next);
     setView("planning");
+    stop();
     setMessage("");
-    setNotice("");
     setCaseOutcome(undefined);
+    setNotice(
+      persistDraft(next)
+        ? ""
+        : "Browser storage is full. Export the scenario to preserve changes.",
+    );
   };
-  function openOutput(output: Result) {
+  function openOutput(output: ResultSummary) {
     setResultId(output.id);
-    setFrameIndex(0);
+    rewind();
     setField("depth");
-    setPlaying(false);
     setView("results");
   }
   function selectStation(id: string) {
@@ -305,9 +274,18 @@ function App() {
     if (assets.dem) s.domain.dem_sha256 = assets.dem.sha256;
     update(s);
   }
+  function customOutlet() {
+    const s = defaultScenarioFor(STATION_BY_ID[PILOT_ID]);
+    s.id = "custom-outlet";
+    s.name = "Custom outlet study";
+    s.outlet.station_id = null;
+    s.forcing.upstream_station_ids = [];
+    if (assets.dem) s.domain.dem_sha256 = assets.dem.sha256;
+    update(s);
+  }
   function loadExample(id: ExampleId) {
     update(exampleScenario(id, assets.dem?.sha256 ?? null));
-    setFrameIndex(0);
+    rewind();
     setNotice("Example loaded. Edit its inputs, then check readiness.");
   }
   function edit(change: (next: Scenario) => void) {
@@ -315,12 +293,18 @@ function App() {
     change(next);
     update(next);
   }
-  async function action(name: string, work: () => Promise<void>) {
+  async function action(
+    name: string,
+    work: (signal: AbortSignal) => Promise<void>,
+  ) {
+    const controller = new AbortController();
+    abort.current = controller;
+    setCancellable(true);
     setBusy(name);
     setMessage("");
     setNotice("");
     try {
-      await work();
+      await work(controller.signal);
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -328,8 +312,12 @@ function App() {
           : "The operation could not complete.",
       );
     } finally {
+      if (abort.current === controller) abort.current = undefined;
       setBusy("");
     }
+  }
+  function cancel() {
+    if (cancellable) abort.current?.abort();
   }
   function save() {
     if (errors.length) {
@@ -349,9 +337,11 @@ function App() {
     }
   }
   async function importScenario(file: File) {
-    await action("Import", async () => {
+    await action("Import", async (signal) => {
       const value = JSON.parse(await file.text());
-      const valid = await api<Scenario>("scenarios/validate", value);
+      const valid = await api<Scenario>("scenarios/validate", value, {
+        signal,
+      });
       update(valid);
       setNotice("Scenario imported and validated against schema version 1.");
     });
@@ -362,7 +352,7 @@ function App() {
     run: boolean,
     engine?: Scenario["hydraulics"]["engine"],
   ) {
-    await action(run ? "Case run" : "Case load", async () => {
+    await action(run ? "Case run" : "Case load", async (signal) => {
       try {
         const previous = scenarioRef.current;
         const candidate = scenarioCaseValues(
@@ -371,17 +361,19 @@ function App() {
           assets.dem?.sha256 ?? null,
           engine,
         );
-        const valid = await api<Scenario>("scenarios/validate", candidate);
+        const valid = await api<Scenario>("scenarios/validate", candidate, {
+          signal,
+        });
         if (previous !== scenarioRef.current)
           throw new Error(
             "The scenario changed while loading. Apply the case again to continue.",
           );
         update(valid);
-        setFrameIndex(0);
+        rewind();
         setTab("scenario");
         if (!run) {
           const output = results.find(
-            (item) => item.frames.length && sameScenario(item.scenario, valid),
+            (item) => item.frame_count && sameScenario(item.scenario, valid),
           );
           if (output) openOutput(output);
           setCaseOutcome({
@@ -395,8 +387,9 @@ function App() {
         let prepared: DomainResult | undefined;
         let preparationError: string | undefined;
         try {
-          prepared = await api<DomainResult>("domain", valid);
+          prepared = await api<DomainResult>("domain", valid, { signal });
         } catch (error) {
+          if (error instanceof CancelledError) throw error;
           preparationError =
             error instanceof Error
               ? error.message
@@ -406,13 +399,13 @@ function App() {
           throw new Error(
             "The scenario changed during preparation. Prepare the updated case again.",
           );
-        if (prepared) setDomain(prepared);
-        const check = await api<Preflight>("preflight", valid);
+        if (prepared) setDomainFor({ scenario: valid, value: prepared });
+        const check = await api<Preflight>("preflight", valid, { signal });
         if (valid !== scenarioRef.current)
           throw new Error(
             "The scenario changed during readiness checks. Prepare the updated case again.",
           );
-        setPreflight(check);
+        setPreflightFor({ scenario: valid, value: check });
         if (!check.ready || !prepared) {
           const issues = check.checks
             .filter((item) => !item.passed)
@@ -426,7 +419,9 @@ function App() {
           });
           return;
         }
-        const submitted = await api<NonNullable<typeof job>>("jobs", valid);
+        // Not cancellable: aborting after the server accepts would lose the job.
+        setCancellable(false);
+        const submitted = await api<Job>("jobs", valid);
         setJob(submitted);
         setCaseOutcome({
           state: "submitted",
@@ -442,6 +437,43 @@ function App() {
         });
         throw error;
       }
+    });
+  }
+  async function bindModel(project: string, plan: string, review: string) {
+    await action("Bind model", async (signal) => {
+      const current = scenarioRef.current;
+      await api(
+        "model-bindings",
+        { scenario: current, project, plan, review },
+        { signal },
+      );
+      const check = await api<Preflight>("preflight", current, { signal });
+      if (current === scenarioRef.current) {
+        setPreflightFor({ scenario: current, value: check });
+        setNotice(
+          `${current.hydraulics.engine} model attached. Prepare & run case to start when all requirements pass.`,
+        );
+      }
+    });
+  }
+  function prepareDomain() {
+    void action("Domain", async (signal) => {
+      const current = scenarioRef.current;
+      const prepared = await api<DomainResult>("domain", current, { signal });
+      if (current === scenarioRef.current) {
+        setDomainFor({ scenario: current, value: prepared });
+        setNotice(
+          `Outlet snapped ${prepared.snapped_outlet.distance_m} m. ${prepared.catchment_status}.`,
+        );
+      }
+    });
+  }
+  function checkReadiness() {
+    void action("Check", async (signal) => {
+      const current = scenarioRef.current;
+      const check = await api<Preflight>("preflight", current, { signal });
+      if (current === scenarioRef.current)
+        setPreflightFor({ scenario: current, value: check });
     });
   }
   function report() {
@@ -472,24 +504,21 @@ function App() {
           </span>
         </a>
         <nav aria-label="Workspace">
-          <button
-            className={tab === "scenario" ? "active" : ""}
-            onClick={() => setTab("scenario")}
-          >
-            Scenario lab
-          </button>
-          <button
-            className={tab === "data" ? "active" : ""}
-            onClick={() => setTab("data")}
-          >
-            Data & provenance
-          </button>
-          <button
-            className={tab === "verification" ? "active" : ""}
-            onClick={() => setTab("verification")}
-          >
-            Plan verification
-          </button>
+          {(
+            [
+              ["scenario", "Scenario lab"],
+              ["data", "Data & provenance"],
+              ["verification", "Plan verification"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              className={tab === id ? "active" : ""}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         <div className="header-end">
           <span className="rd-badge">RESEARCH / DEVELOPMENT</span>
@@ -503,107 +532,13 @@ function App() {
         </div>
       </header>
       <div className="workspace">
-        <aside className="station-panel" aria-label="Station catalog">
-          <div className="panel-label">
-            01 / STATION CATALOG <span>{STATIONS.length}</span>
-          </div>
-          <h2>Start upstream.</h2>
-          <p className="muted">
-            Trace the connected system
-            <br />
-            before testing the floodplain.
-          </p>
-          <label className="search-box">
-            <span>⌕</span>
-            <input
-              aria-label="Search stations"
-              placeholder="Search station or river"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-          <div className="catalog-label">
-            {allStations
-              ? "NATIONAL REFERENCE CATALOG"
-              : "UPPER BASIN STARTING POINTS"}
-          </div>
-          <div className="station-list">
-            {visibleStations.map((s) => (
-              <button
-                key={s.id}
-                className={`station-button ${stationId === s.id ? "selected" : ""}`}
-                onClick={() => selectStation(s.id)}
-              >
-                <span className={`station-dot ${s.kind}`} />
-                <span>
-                  <strong>{s.name}</strong>
-                  <small>
-                    {s.riverName} <span>·</span>{" "}
-                    {s.kind === "dam"
-                      ? "Reservoir"
-                      : s.kind === "barrage"
-                        ? "Barrage"
-                        : "River gauge"}
-                  </small>
-                </span>
-                {s.id === PILOT_ID ? (
-                  <span className="pilot-badge">PILOT</span>
-                ) : (
-                  <span className="station-arrow">↗</span>
-                )}
-              </button>
-            ))}
-          </div>
-          {!visibleStations.length && (
-            <p className="muted">No matching stations.</p>
-          )}
-          <button
-            className="text-button catalog-toggle"
-            onClick={() => setAllStations(!allStations)}
-          >
-            {allStations
-              ? "← Upper basin selection"
-              : `Browse all ${STATIONS.length} stations →`}
-          </button>
-          <button
-            className="custom-button"
-            onClick={() => {
-              const s = defaultScenarioFor(STATION_BY_ID[PILOT_ID]);
-              s.id = "custom-outlet";
-              s.name = "Custom outlet study";
-              s.outlet.station_id = null;
-              s.forcing.upstream_station_ids = [];
-              if (assets.dem) s.domain.dem_sha256 = assets.dem.sha256;
-              update(s);
-            }}
-          >
-            ＋ Custom lat / long or gauge
-          </button>
-          <div className="pilot-note">
-            <span className="eyebrow">FIRST PROOF</span>
-            <strong>Nowshera · August 2022</strong>
-            <p>
-              Warsak → Nowshera → Attock
-              <br />
-              Upstream boundaries first. Expand hydraulic runs after the pilot
-              is validated.
-            </p>
-          </div>
-          <div className="service-status">
-            <i className={health ? "online" : ""} />
-            <span>
-              {health
-                ? "Local data service connected"
-                : "Local data service offline"}
-            </span>
-            <button
-              title="Refresh service and data"
-              onClick={() => void refresh()}
-            >
-              ↻
-            </button>
-          </div>
-        </aside>
+        <StationCatalog
+          stationId={stationId}
+          connected={!!health}
+          onSelect={selectStation}
+          onCustom={customOutlet}
+          onRefresh={() => void refresh()}
+        />
 
         <main className="main-panel">
           <div className="workspace-heading">
@@ -694,15 +629,15 @@ function App() {
               <ScenarioCaseRunner
                 cases={scenarioCases}
                 connected={!!health}
-                busy={
-                  busy ||
-                  (["queued", "running"].includes(job?.state ?? "")
-                    ? "Model running"
-                    : "")
-                }
+                busy={busy || (isActive(job) ? "Model running" : "")}
                 outcome={caseOutcome}
                 onChange={() => setCaseOutcome(undefined)}
                 onApply={applyScenarioCase}
+                onCancel={
+                  cancellable && (busy === "Case load" || busy === "Case run")
+                    ? cancel
+                    : undefined
+                }
               />
               <div className="map-toolbar">
                 <div className="segmented">
@@ -710,7 +645,7 @@ function App() {
                     className={view === "planning" ? "active" : ""}
                     onClick={() => {
                       setView("planning");
-                      setPlaying(false);
+                      stop();
                     }}
                   >
                     Domain overview
@@ -722,9 +657,9 @@ function App() {
                         const output =
                           results.find(
                             (item) =>
-                              item.frames.length &&
+                              item.frame_count &&
                               sameScenario(item.scenario, scenario),
-                          ) ?? results.find((item) => item.frames.length);
+                          ) ?? results.find((item) => item.frame_count);
                         if (output) openOutput(output);
                       }
                       setView("results");
@@ -740,79 +675,20 @@ function App() {
                 </span>
               </div>
               {view === "results" && (
-                <div className="result-picker">
-                  <label>
-                    Result A
-                    <select
-                      aria-label="Result A"
-                      value={resultId}
-                      onChange={(e) => {
-                        setResultId(e.target.value);
-                        setFrameIndex(0);
-                        setPlaying(false);
-                      }}
-                    >
-                      <option value="">Select published output</option>
-                      {results.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.scenario.name} · {r.engine}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Compare B
-                    <select
-                      aria-label="Result B"
-                      value={compareId}
-                      onChange={(e) => setCompareId(e.target.value)}
-                    >
-                      <option value="">No comparison</option>
-                      {results
-                        .filter(
-                          (r) =>
-                            r.id !== resultId &&
-                            (!result ||
-                              r.scenario.outlet.station_id ===
-                                result.scenario.outlet.station_id),
-                        )
-                        .map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.scenario.name} · {r.engine}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <label>
-                    Compare times
-                    <select
-                      aria-label="Comparison timing"
-                      value={comparisonTiming}
-                      onChange={(event) =>
-                        setComparisonTiming(
-                          event.target.value as typeof comparisonTiming,
-                        )
-                      }
-                    >
-                      <option value="exact">Exact timestamps</option>
-                      <option value="nearby">
-                        Nearest frame within 60 seconds
-                      </option>
-                    </select>
-                  </label>
-                  <label>
-                    Field
-                    <select
-                      aria-label="Model field"
-                      value={field}
-                      onChange={(e) => setField(e.target.value as typeof field)}
-                    >
-                      <option value="depth">Depth (m)</option>
-                      <option value="wse">Water surface (m)</option>
-                      <option value="velocity">Speed (m/s)</option>
-                    </select>
-                  </label>
-                </div>
+                <ResultPicker
+                  results={results}
+                  result={resultSummary}
+                  compareId={compareId}
+                  timing={comparisonTiming}
+                  field={field}
+                  onResult={(id) => {
+                    setResultId(id);
+                    rewind();
+                  }}
+                  onCompare={setCompareId}
+                  onTiming={setComparisonTiming}
+                  onField={setField}
+                />
               )}
               <Suspense
                 fallback={
@@ -841,182 +717,49 @@ function App() {
                   onStation={selectStation}
                 />
               </Suspense>
-              {view === "results" && !result && (
+              {loadingResult && (
+                <div className="inline-note" role="status">
+                  Loading published output…
+                </div>
+              )}
+              {view === "results" && !resultSummary && (
                 <div className="inline-note">
                   No result selected. Publish timestamped HEC-RAS or LISFLOOD-FP
                   rasters to enable scientific playback.
                 </div>
               )}
               {showResults && (
-                <div className="result-details">
-                  <span>{result.validation_status}</span>
-                  {frame && !frame.fields[field] && (
-                    <strong>This field was not exported for this frame.</strong>
-                  )}
-                  {comparing && !comparisonFrame && (
-                    <strong>
-                      {comparisonTiming === "exact"
-                        ? "B has no frame at this model time."
-                        : "B has no frame within 60 seconds of this model time."}
-                    </strong>
-                  )}
-                  {comparing && comparisonFrame && frame && (
-                    <div className="comparison-times" role="status">
-                      <span>
-                        A · {result.engine}:{" "}
-                        {new Date(frame.time).toISOString()}
-                      </span>
-                      <span>
-                        B · {comparing.engine}:{" "}
-                        {new Date(comparisonFrame.time).toISOString()}
-                      </span>
-                      <span>
-                        B time offset: {comparisonOffset! >= 0 ? "+" : ""}
-                        {comparisonOffset!.toFixed(3)} s. Original frames; no
-                        temporal interpolation.
-                      </span>
-                    </div>
-                  )}
-                  {comparing &&
-                    comparing.terrain_sha256 !== result.terrain_sha256 && (
-                      <strong>
-                        A/B use different terrain hashes; interpret differences
-                        accordingly.
-                      </strong>
-                    )}
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={showObserved}
-                      disabled={!result.extent_validation?.overlay}
-                      onChange={(e) => setShowObserved(e.target.checked)}
-                    />{" "}
-                    Observed extent at matched acquisition time
-                  </label>
-                </div>
-              )}
-              <div className="timebar">
-                <button
-                  className="play-button"
-                  aria-label={playing ? "Pause playback" : "Play model output"}
-                  disabled={!showResults || !result.frames.length}
-                  onClick={() => {
-                    if (frameIndex === result!.frames.length - 1)
-                      setFrameIndex(0);
-                    setPlaying(!playing);
-                  }}
-                >
-                  {playing ? "Ⅱ" : "▶"}
-                </button>
-                <div className="time-label">
-                  <span>MODEL TIME</span>
-                  <strong>
-                    {showResults
-                      ? utc(frame?.time)
-                      : "Awaiting hydraulic output"}
-                  </strong>
-                </div>
-                <input
-                  aria-label="Model timestep"
-                  type="range"
-                  min="0"
-                  max={Math.max(0, (result?.frames.length ?? 1) - 1)}
-                  value={frameIndex}
-                  disabled={!showResults}
-                  onChange={(e) => {
-                    setPlaying(false);
-                    setFrameIndex(+e.target.value);
-                  }}
+                <ResultDetails
+                  result={result}
+                  frame={frame}
+                  field={field}
+                  comparing={comparing}
+                  comparisonFrame={comparisonFrame}
+                  timing={comparisonTiming}
+                  showObserved={showObserved}
+                  onShowObserved={setShowObserved}
                 />
-                <span className="frame-count">
-                  {showResults
-                    ? `${frameIndex + 1} / ${result.frames.length}`
-                    : "— / —"}
-                </span>
-              </div>
-              <div className="map-legend">
-                <span>
-                  {field === "depth"
-                    ? "DEPTH / m"
-                    : field === "velocity"
-                      ? "SPEED / m/s"
-                      : "WSE / m"}
-                </span>
-                {(field === "depth"
-                  ? ["0–0.3", "0.3–1", "1–2", "2–5", ">5"]
-                  : field === "velocity"
-                    ? ["0–0.5", "0.5–1", "1–2", "2–3", ">3"]
-                    : ["<100", "100–300", "300–500", "500–1,000", ">1,000"]
-                ).map((label, i) => (
-                  <span key={label}>
-                    <i
-                      style={{
-                        background: [
-                          "#91d7f1",
-                          "#3da9dc",
-                          "#226fc0",
-                          "#224391",
-                          "#64419c",
-                        ][i],
-                      }}
-                    />
-                    {label}
-                  </span>
-                ))}
-                <small>
-                  {showResults
-                    ? "Dry / nodata transparent"
-                    : "Legend activates with model rasters"}
-                </small>
-              </div>
-              <section className="network-section">
-                <div className="section-title">
-                  <h2>Upstream → downstream</h2>
-                  <span>CONNECTIVITY / PLANNING</span>
-                </div>
-                <div className="network-cards">
-                  <div>
-                    <span>UPSTREAM BOUNDARIES</span>
-                    <strong>
-                      {upstream.length
-                        ? stationNames(upstream)
-                        : station
-                          ? "Headwater catalog entry"
-                          : "Snap outlet first"}
-                    </strong>
-                    <small>
-                      {upstream.length
-                        ? "Supply each contributing boundary and lateral inflow"
-                        : "Catchment and tributary review required"}
-                    </small>
-                  </div>
-                  <span className="network-arrow">→</span>
-                  <div className="network-current">
-                    <span>STUDY OUTLET</span>
-                    <strong>{station?.name ?? "Custom outlet"}</strong>
-                    <small>{station?.riverName ?? "Unassigned channel"}</small>
-                  </div>
-                  <span className="network-arrow">→</span>
-                  <div>
-                    <span>DOWNSTREAM RECEPTORS</span>
-                    <strong>
-                      {downstream.length
-                        ? stationNames(downstream.slice(0, 4))
-                        : "No downstream station in catalog"}
-                      {downstream.length > 4 && " …"}
-                    </strong>
-                    <small>
-                      {downstream.length} connected stations · no travel time
-                      assumed
-                    </small>
-                  </div>
-                </div>
-                <p className="footnote">
-                  Connectivity is a schematic. Flow timing, reservoir operations
-                  and tributary contributions come from a calibrated routing or
-                  hydraulic model.
-                </p>
-              </section>
+              )}
+              <PlaybackBar
+                enabled={showResults}
+                frameCount={result?.frames.length ?? 0}
+                frameIndex={playback.frameIndex}
+                time={frame?.time}
+                playing={playback.playing}
+                speed={playback.speed}
+                onToggle={playback.toggle}
+                onSeek={playback.seek}
+                onSpeed={playback.setSpeed}
+              />
+              <MapLegend
+                field={field}
+                result={showResults ? result : undefined}
+              />
+              <NetworkSummary
+                station={station}
+                upstream={upstream}
+                downstream={downstream}
+              />
               <section className="hydrograph-section">
                 <div className="section-title">
                   <h2>Discharge hydrograph</h2>
@@ -1035,941 +778,64 @@ function App() {
           )}
 
           {tab === "data" && (
-            <section className="data-view">
-              <div className="section-title">
-                <h2>Data with a traceable origin</h2>
-                <button className="small-button" onClick={() => void refresh()}>
-                  ↻ Refresh assets
-                </button>
-              </div>
-              <p className="muted">
-                Clip one bounded hydraulic domain. Prepare hydrology over the
-                full contributing catchment. Every registered input retains its
-                source, license and SHA-256.
-              </p>
-              <div className="runtime-grid">
-                {[
-                  ["HEC-RAS", health?.runtimes.hec_ras],
-                  ["RAS Commander", health?.runtimes.ras_commander],
-                  ["HEC-HMS", health?.runtimes.hec_hms],
-                  ["LISFLOOD-FP", health?.runtimes.lisflood_fp],
-                ].map(([name, ready]) => (
-                  <div key={String(name)}>
-                    <span className={ready ? "ready-text" : "muted"}>●</span>
-                    <strong>{name}</strong>
-                    <small>
-                      {ready
-                        ? "Installed"
-                        : health
-                          ? "Not detected"
-                          : "Service offline"}
-                    </small>
-                  </div>
-                ))}
-              </div>
-              <div className="source-list">
-                {SOURCES.map((source) => (
-                  <article key={source.key}>
-                    <div>
-                      <span
-                        className={`source-state ${assets[source.key] ? "available" : ""}`}
-                      >
-                        {assets[source.key] ? "REGISTERED" : "REQUIRED INPUT"}
-                      </span>
-                      <h3>{source.name}</h3>
-                      <a
-                        href={
-                          assets[source.key]?.source.startsWith("https://")
-                            ? assets[source.key].source
-                            : source.href
-                        }
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {assets[source.key]?.product ?? source.product} ↗
-                      </a>
-                      <p>{assets[source.key]?.license ?? source.license}</p>
-                      {assets[source.key]?.acquisition?.notes && (
-                        <p>{assets[source.key].acquisition!.notes}</p>
-                      )}
-                      <small>Fallback: {source.fallback}</small>
-                      {assets[source.key] && (
-                        <code title={assets[source.key].sha256}>
-                          SHA-256 {assets[source.key].sha256.slice(0, 24)}…
-                        </code>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-              <StudyPanel />
-              <div className="inline-note">
-                Register downloaded inputs using{" "}
-                <code>python -m server.cli register --help</code>. Public STAC
-                COG clipping is available through <code>stac-import</code>. The
-                README documents file formats and the model handoff.
-              </div>
-            </section>
+            <DataView
+              health={health}
+              assets={assets}
+              onRefresh={() => void refresh()}
+            />
           )}
 
           {tab === "verification" && (
-            <section className="verification-view">
-              <span className="eyebrow">
-                PLAN COVERAGE / IMPLEMENTATION EVIDENCE
-              </span>
-              <h2>A picture must match the physics.</h2>
-              <p className="muted">
-                Each phase has a working software path and a separate scientific
-                acceptance condition. A passing build does not validate a flood
-                model.
-              </p>
-              <div className="verification-list">
-                {[
-                  [
-                    "0",
-                    "Station catalog",
-                    "FFD flood classes, source links, SI conversion, approximate WGS84 coordinates and upstream topology.",
-                    "Coordinates need MERIT snap and gauge-location review.",
-                    true,
-                  ],
-                  [
-                    "1",
-                    "Domain builder",
-                    "Bounded raster clipping, real-channel snap, source hashes, public STAC COG import and supplied basin overlay.",
-                    "Catchment delineation must be supplied from MERIT/HydroBASINS and reviewed. Local terrain tiles must come from the same DEM clip.",
-                    !!domain,
-                  ],
-                  [
-                    "2",
-                    "Hydrology & scenarios",
-                    "Versioned JSON, all eight scenario families, soil and rainfall assumptions, upstream boundaries and boundary CSV intake.",
-                    "HEC-HMS / rain-on-grid hydrology requires a prepared, calibrated model. No runoff or routing is invented in the browser.",
-                    !!assets.inflow,
-                  ],
-                  [
-                    "3",
-                    "Hydraulic model",
-                    "Preflight, scenario-bound prepared model inputs, isolated worker, HEC-RAS / LISFLOOD adapters and HDF inspection.",
-                    "Actual mesh, structures, boundary conditions and numerical checks must be reviewed before compute.",
-                    !!preflight?.ready,
-                  ],
-                  [
-                    "4",
-                    "Animation & validation",
-                    "Time-stamped raster playback, A/B on exact matching times, hydrographs, NSE/KGE, extent CSI/POD/FAR and report export.",
-                    "The 2022 Nowshera pilot must meet the documented skill targets against independent gauges and Sentinel-1 / UNOSAT.",
-                    !!results.find(
-                      (r) =>
-                        r.scenario.outlet.station_id === PILOT_ID &&
-                        r.validation_passed,
-                    ),
-                  ],
-                ].map(([number, title, implemented, remaining, ready]) => (
-                  <article key={String(number)}>
-                    <span className="phase-number">0{number}</span>
-                    <div>
-                      <div className="section-title">
-                        <h3>{title}</h3>
-                        <span className={ready ? "ready-text" : "pending-text"}>
-                          {ready
-                            ? "EVIDENCE AVAILABLE"
-                            : "INPUT / MODEL EVIDENCE PENDING"}
-                        </span>
-                      </div>
-                      <p>{implemented}</p>
-                      <small>{remaining}</small>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              <div className="contract-grid">
-                <div>
-                  <h3>Hydrology</h3>
-                  <p>Gauge inflow or HEC-HMS / documented infiltration.</p>
-                </div>
-                <span>→</span>
-                <div>
-                  <h3>Hydraulics</h3>
-                  <p>HEC-RAS full SWE or LISFLOOD-FP screening.</p>
-                </div>
-                <span>→</span>
-                <div>
-                  <h3>Animation</h3>
-                  <p>Georeferenced model rasters. Cesium computes no water.</p>
-                </div>
-              </div>
-              <h3 className="validation-heading">Selected output validation</h3>
-              <div className="metrics-grid">
-                {[
-                  ["NSE", graph?.metrics.nse, scoreTargets.target_nse],
-                  ["KGE", graph?.metrics.kge, scoreTargets.target_kge],
-                  [
-                    "Extent CSI",
-                    result?.extent_validation?.csi,
-                    scoreTargets.target_csi,
-                  ],
-                ].map(([name, value, target]) => (
-                  <div key={String(name)}>
-                    <span>{name}</span>
-                    <strong>{fmt(value as number | undefined)}</strong>
-                    <small>Target ≥ {String(target)}</small>
-                  </div>
-                ))}
-              </div>
-              <p className="footnote">
-                Targets are editable acceptance assumptions. Constant or missing
-                observations produce undefined scores, never a fabricated pass.
-              </p>
-              <button className="secondary-button" onClick={report}>
-                Export scenario & verification report ↗
-              </button>
-            </section>
+            <VerificationView
+              phaseEvidence={{
+                domain: !!domain,
+                inflow: !!assets.inflow,
+                preflight: !!preflight?.ready,
+              }}
+              results={results}
+              result={result}
+              graph={graph}
+              targets={scoreTargets}
+              onReport={report}
+            />
           )}
         </main>
 
-        <aside className="scenario-panel" aria-label="Scenario editor">
-          <div className="panel-label">
-            02 / SCENARIO DEFINITION <span>v1</span>
-          </div>
-          <div className="editor-title">
-            <h2>Shape the scenario.</h2>
-            <span className="draft-dot">DRAFT</span>
-          </div>
-          <p className="muted">
-            A reproducible experiment.
-            <br />
-            Every assumption stays with the run.
-          </p>
-          <label>
-            Scenario name
-            <input
-              value={scenario.name}
-              onChange={(e) =>
-                edit((s) => {
-                  s.name = e.target.value;
-                })
-              }
-            />
-          </label>
-          <label>
-            Experiment
-            <select
-              aria-label="Experiment"
-              value={scenario.kind}
-              onChange={(e) =>
-                update(applyPreset(scenario, e.target.value as ScenarioKind))
-              }
-            >
-              {Object.entries(KIND_LABELS).map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!station && (
-            <div className="field-row">
-              <label>
-                Latitude °N
-                <input
-                  type="number"
-                  min="23"
-                  max="38"
-                  step="0.0001"
-                  value={scenario.outlet.lat}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.outlet.lat = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Longitude °E
-                <input
-                  type="number"
-                  min="60"
-                  max="80"
-                  step="0.0001"
-                  value={scenario.outlet.lon}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.outlet.lon = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-            </div>
-          )}
-          <div className="editor-section">
-            <h3>
-              <span>01</span> Domain & time
-            </h3>
-            <div className="field-row">
-              <label>
-                Radius / km
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={scenario.domain.radius_km}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.domain.radius_km = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Mesh / m
-                <input
-                  type="number"
-                  min="10"
-                  max="1000"
-                  value={scenario.domain.mesh_m}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.domain.mesh_m = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <div className="field-row">
-              <label>
-                Start / UTC
-                <input
-                  type="date"
-                  value={scenario.time.start.slice(0, 10)}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.time.start = `${e.target.value}T00:00:00Z`;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                End / UTC
-                <input
-                  type="date"
-                  value={scenario.time.end.slice(0, 10)}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.time.end = `${e.target.value}T00:00:00Z`;
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <div className="field-row">
-              <label>
-                Output / minutes
-                <input
-                  type="number"
-                  min="1"
-                  max="1440"
-                  value={scenario.time.output_interval_minutes}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.time.output_interval_minutes = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Model CRS
-                <select
-                  value={scenario.domain.model_crs}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.domain.model_crs = e.target
-                        .value as Scenario["domain"]["model_crs"];
-                    })
-                  }
-                >
-                  <option>EPSG:32642</option>
-                  <option>EPSG:32643</option>
-                </select>
-              </label>
-            </div>
-            <small className="field-help">
-              FABDEM default ·{" "}
-              {assets.dem
-                ? `hash ${assets.dem.sha256.slice(0, 10)}`
-                : "terrain input pending"}
-            </small>
-          </div>
-          <div className="editor-section">
-            <h3>
-              <span>02</span> Forcing & initial state
-            </h3>
-            <label>
-              Boundary method
-              <select
-                value={scenario.forcing.mode}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.forcing.mode = e.target
-                      .value as Scenario["forcing"]["mode"];
-                  })
-                }
-              >
-                <option value="inflow_hydrograph">
-                  Gauge / HEC-HMS inflow
-                </option>
-                <option value="rain_on_grid">Documented rain-on-grid</option>
-              </select>
-            </label>
-            <div className="field-row">
-              <label>
-                Rainfall product
-                <select
-                  value={scenario.forcing.rainfall_product}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.forcing.rainfall_product = e.target
-                        .value as Scenario["forcing"]["rainfall_product"];
-                    })
-                  }
-                >
-                  {["GPM IMERG", "CHIRPS", "PMD gauges", "design storm"].map(
-                    (p) => (
-                      <option key={p}>{p}</option>
-                    ),
-                  )}
-                </select>
-              </label>
-              <label>
-                Rain multiplier
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  max="5"
-                  value={scenario.forcing.rainfall_multiplier}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.forcing.rainfall_multiplier = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <div className="field-row">
-              <label>
-                Soil moisture
-                <select
-                  value={scenario.forcing.soil_moisture}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.forcing.soil_moisture = e.target
-                        .value as Scenario["forcing"]["soil_moisture"];
-                    })
-                  }
-                >
-                  {["SMAP", "dry", "normal", "saturated"].map((p) => (
-                    <option key={p}>{p}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Infiltration
-                <select
-                  value={scenario.forcing.infiltration}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.forcing.infiltration = e.target
-                        .value as Scenario["forcing"]["infiltration"];
-                    })
-                  }
-                >
-                  <option>Green-Ampt</option>
-                  <option>SCS-CN</option>
-                </select>
-              </label>
-            </div>
-            {scenario.kind === "design_storm" && (
-              <div className="field-row">
-                <label>
-                  Storm depth / mm
-                  <input
-                    type="number"
-                    value={scenario.forcing.design_storm_mm ?? 150}
-                    onChange={(e) =>
-                      edit((s) => {
-                        s.forcing.design_storm_mm = +e.target.value;
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Return period / years
-                  <input
-                    type="number"
-                    value={scenario.forcing.return_period_years ?? 100}
-                    onChange={(e) =>
-                      edit((s) => {
-                        s.forcing.return_period_years = +e.target.value;
-                      })
-                    }
-                  />
-                </label>
-              </div>
-            )}
-            {scenario.kind === "ffd_class" && (
-              <label>
-                FFD target class
-                <select
-                  value={scenario.forcing.ffd_class ?? "high"}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.forcing.ffd_class = e.target
-                        .value as Scenario["forcing"]["ffd_class"];
-                    })
-                  }
-                >
-                  {["low", "medium", "high", "veryHigh", "exceptional"]
-                    .filter(
-                      (c) =>
-                        !station ||
-                        station.limits[c as keyof typeof station.limits] !==
-                          null,
-                    )
-                    .map((c) => (
-                      <option key={c} value={c}>
-                        {c === "veryHigh" ? "Very high" : c}
-                      </option>
-                    ))}
-                </select>
-                {station && scenario.forcing.ffd_class && (
-                  <small className="field-help">
-                    {station.limits[scenario.forcing.ffd_class] == null
-                      ? "Class not published for this station"
-                      : `${station.limits[scenario.forcing.ffd_class]} lakh cusecs ≈ ${Math.round(lakhToM3s(station.limits[scenario.forcing.ffd_class]!)).toLocaleString()} m³/s. Boundary target only.`}
-                  </small>
-                )}
-              </label>
-            )}
-            <label>
-              Rainfall bias correction / hydrology notes
-              <textarea
-                rows={2}
-                placeholder="Gauge adjustment, IDF source or why rainfall is unused…"
-                value={scenario.forcing.bias_correction}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.forcing.bias_correction = e.target.value;
-                  })
-                }
-              />
-            </label>
-            <fieldset className="boundary-options">
-              <legend>Contributing station boundaries</legend>
-              {boundaryIds.length ? (
-                boundaryIds.map((id) => (
-                  <label key={id}>
-                    <input
-                      type="checkbox"
-                      checked={scenario.forcing.upstream_station_ids.includes(
-                        id,
-                      )}
-                      onChange={(e) =>
-                        edit((s) => {
-                          s.forcing.upstream_station_ids = e.target.checked
-                            ? [...s.forcing.upstream_station_ids, id]
-                            : s.forcing.upstream_station_ids.filter(
-                                (v) => v !== id,
-                              );
-                        })
-                      }
-                    />
-                    {STATION_BY_ID[id]?.name ??
-                      (id === "charsadda-road"
-                        ? "Charsadda Road (Swat)"
-                        : id === "nowshera-hms"
-                          ? "Modeled Kabul inflow (HEC-HMS)"
-                          : id)}
-                  </label>
-                ))
-              ) : (
-                <small>
-                  Additional irrigation / nullah gauges can be named in the JSON
-                  boundary manifest.
-                </small>
-              )}
-            </fieldset>
-          </div>
-          <div className="editor-section">
-            <h3>
-              <span>03</span> Hydraulic model
-            </h3>
-            <label>
-              Compute engine
-              <select
-                value={scenario.hydraulics.engine}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.hydraulics.engine = e.target
-                      .value as Scenario["hydraulics"]["engine"];
-                    s.hydraulics.equations =
-                      e.target.value === "HEC-RAS 2D"
-                        ? "full SWE"
-                        : "local inertial";
-                  })
-                }
-              >
-                <option>HEC-RAS 2D</option>
-                <option>LISFLOOD-FP</option>
-              </select>
-            </label>
-            <div className="engine-caption">
-              <i />
-              {scenario.hydraulics.equations} <span>·</span>{" "}
-              {scenario.hydraulics.engine === "HEC-RAS 2D"
-                ? "Gold-standard hydraulics"
-                : "Fast screening"}
-            </div>
-            <p className="field-help">
-              {scenario.hydraulics.engine === "HEC-RAS 2D"
-                ? health?.runtimes.hec_ras && health?.runtimes.ras_commander
-                  ? "HEC-RAS runtime available. Load the runnable HEC-RAS case or attach your own prepared project."
-                  : "Install HEC-RAS and RAS Commander to run this engine."
-                : health?.runtimes.lisflood_fp
-                  ? "LISFLOOD runtime available. Load the public case or attach a prepared ACC model."
-                  : "Configure a LISFLOOD-FP runtime to run this engine."}
-            </p>
-            <ModelBindingForm
-              key={scenario.hydraulics.engine}
-              engine={scenario.hydraulics.engine}
-              disabled={!health || !!busy}
-              onBind={async (project, plan, review) => {
-                await action("Bind model", async () => {
-                  const current = scenarioRef.current;
-                  await api("model-bindings", {
-                    scenario: current,
-                    project,
-                    plan,
-                    review,
-                  });
-                  const check = await api<Preflight>("preflight", current);
-                  if (current === scenarioRef.current) {
-                    setPreflight(check);
-                    setNotice(
-                      `${current.hydraulics.engine} model attached. Prepare & run case to start when all requirements pass.`,
-                    );
-                  }
-                });
-              }}
-            />
-            <label>
-              Manning roughness source
-              <select
-                value={scenario.hydraulics.manning_source}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.hydraulics.manning_source = e.target
-                      .value as Scenario["hydraulics"]["manning_source"];
-                  })
-                }
-              >
-                <option>ESA WorldCover</option>
-                <option>Dynamic World</option>
-                <option>Prepared model</option>
-              </select>
-            </label>
-            {scenario.hydraulics.structures.map((structure, i) => (
-              <div key={i} className="structure-editor">
-                <div className="field-row">
-                  <label>
-                    Name
-                    <input
-                      value={structure.name}
-                      onChange={(e) =>
-                        edit((s) => {
-                          s.hydraulics.structures[i].name = e.target.value;
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Type
-                    <select
-                      value={structure.type}
-                      onChange={(e) =>
-                        edit((s) => {
-                          s.hydraulics.structures[i].type = e.target
-                            .value as typeof structure.type;
-                        })
-                      }
-                    >
-                      {["barrage", "levee", "reservoir", "breach"].map(
-                        (type) => (
-                          <option key={type}>{type}</option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                </div>
-                <label>
-                  {structure.name} specification
-                  <textarea
-                    rows={2}
-                    placeholder="Geometry, gate operations, release or breach timing…"
-                    value={structure.specification}
-                    onChange={(e) =>
-                      edit((s) => {
-                        s.hydraulics.structures[i].specification =
-                          e.target.value;
-                      })
-                    }
-                  />
-                </label>
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    edit((s) => {
-                      s.hydraulics.structures.splice(i, 1);
-                    })
-                  }
-                >
-                  Remove structure
-                </button>
-              </div>
-            ))}
-            <button
-              className="text-button"
-              onClick={() =>
-                edit((s) => {
-                  s.hydraulics.structures.push({
-                    type: "levee",
-                    name: `Structure ${s.hydraulics.structures.length + 1}`,
-                    specification: "",
-                  });
-                })
-              }
-            >
-              ＋ Add structure specification
-            </button>
-          </div>
-          <details className="advanced-options">
-            <summary>Validation & provenance</summary>
-            <div className="field-row">
-              <label>
-                NSE target
-                <input
-                  type="number"
-                  step="0.05"
-                  max="1"
-                  value={scenario.validation.target_nse}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.validation.target_nse = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                KGE target
-                <input
-                  type="number"
-                  step="0.05"
-                  max="1"
-                  value={scenario.validation.target_kge}
-                  onChange={(e) =>
-                    edit((s) => {
-                      s.validation.target_kge = +e.target.value;
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <label>
-              Extent CSI target
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.05"
-                value={scenario.validation.target_csi}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.validation.target_csi = +e.target.value;
-                  })
-                }
-              />
-            </label>
-            <label>
-              Validation extent
-              <select
-                value={scenario.validation.extent_source}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.validation.extent_source = e.target
-                      .value as Scenario["validation"]["extent_source"];
-                  })
-                }
-              >
-                <option>Sentinel-1</option>
-                <option>UNOSAT</option>
-              </select>
-            </label>
-            <label>
-              Scenario notes
-              <textarea
-                rows={4}
-                value={scenario.provenance.notes}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.provenance.notes = e.target.value;
-                  })
-                }
-              />
-            </label>
-            <label>
-              Scenario ID
-              <input
-                value={scenario.id}
-                onChange={(e) =>
-                  edit((s) => {
-                    s.id = e.target.value;
-                  })
-                }
-              />
-            </label>
-          </details>
-          <div className="editor-actions">
-            {errors.length > 0 && (
-              <div className="error-box" role="alert">
-                {errors.join(" ")}
-              </div>
-            )}
-            {message && (
-              <div className="error-box" role="alert">
-                {message}
-              </div>
-            )}
-            {notice && (
-              <div className="success-box" role="status">
-                {notice}
-              </div>
-            )}
-            <div className="action-row">
-              <button
-                className="secondary-button"
-                disabled={!health || !!busy || !!errors.length}
-                onClick={() =>
-                  void action("Domain", async () => {
-                    const current = scenarioRef.current;
-                    const prepared = await api<DomainResult>("domain", current);
-                    if (current === scenarioRef.current) {
-                      setDomain(prepared);
-                      setNotice(
-                        `Outlet snapped ${prepared.snapped_outlet.distance_m} m. ${prepared.catchment_status}.`,
-                      );
-                    }
-                  })
-                }
-              >
-                {busy === "Domain" ? "Preparing…" : "Prepare domain"}
-              </button>
-              <button
-                className="secondary-button"
-                disabled={!health || !!busy || !!errors.length}
-                onClick={() =>
-                  void action("Check", async () => {
-                    const current = scenarioRef.current;
-                    const check = await api<Preflight>("preflight", current);
-                    if (current === scenarioRef.current) setPreflight(check);
-                  })
-                }
-              >
-                {busy === "Check" ? "Checking…" : "Check readiness"}
-              </button>
-            </div>
-            {preflight && (
-              <div className="preflight-list">
-                <strong>
-                  {preflight.ready
-                    ? "Prepared for compute"
-                    : `${preflight.checks.filter((c) => !c.passed).length} requirements to resolve`}
-                </strong>
-                {preflight.checks.map((check) => (
-                  <p key={check.key} title={check.detail}>
-                    <span
-                      className={check.passed ? "ready-text" : "pending-text"}
-                    >
-                      {check.passed ? "✓" : "○"}
-                    </span>{" "}
-                    {check.detail}
-                  </p>
-                ))}
-              </div>
-            )}
-            <button
-              className="primary-button"
-              disabled={
-                !!busy ||
-                !preflight?.ready ||
-                ["queued", "running"].includes(job?.state ?? "")
-              }
-              onClick={() =>
-                void action("Run", async () => {
-                  setJob(await api("jobs", scenario));
-                })
-              }
-            >
-              Run hydraulic model <span>→</span>
-            </button>
-            <small className="field-help">
-              {stationId !== PILOT_ID
-                ? "Planning available. Hydraulic compute is limited to the Nowshera pilot."
-                : "Compute unlocks when real data and a reviewed model pass preflight."}
-            </small>
-            {job && (
-              <p className="job-state" role="status">
-                Job {job.id.slice(0, 8)} · {job.state}
-                <small>{job.detail}</small>
-              </p>
-            )}
-            <div className="action-row file-actions">
-              <button onClick={save}>Save draft</button>
-              <button onClick={() => download(`${scenario.id}.json`, scenario)}>
-                Export JSON ↗
-              </button>
-              <button onClick={() => fileInput.current?.click()}>Import</button>
-              <input
-                ref={fileInput}
-                type="file"
-                accept=".json,application/json"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void importScenario(f);
-                  e.target.value = "";
-                }}
-              />
-            </div>
-            {library.length > 0 && (
-              <label>
-                Saved drafts
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const saved = library.find((s) => s.id === e.target.value);
-                    if (saved) update(structuredClone(saved));
-                  }}
-                >
-                  <option value="">Load a saved scenario…</option>
-                  {library.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
-        </aside>
+        <ScenarioEditor
+          scenario={scenario}
+          station={station}
+          stationId={stationId}
+          assets={assets}
+          health={health}
+          boundaryIds={boundaryIds}
+          busy={busy}
+          edit={edit}
+          update={update}
+          onBind={bindModel}
+          errors={errors}
+          message={message}
+          notice={notice}
+          preflight={preflight}
+          job={job}
+          library={library}
+          onPrepareDomain={prepareDomain}
+          onCancel={
+            cancellable &&
+            ["Domain", "Check", "Bind model", "Import"].includes(busy)
+              ? cancel
+              : undefined
+          }
+          onCheck={checkReadiness}
+          onRun={() =>
+            void action("Run", async () => {
+              setCancellable(false);
+              setJob(await api<Job>("jobs", scenario));
+            })
+          }
+          onSave={save}
+          onExport={() => download(`${scenario.id}.json`, scenario)}
+          onImport={(file) => void importScenario(file)}
+        />
       </div>
       <footer className="app-footer">
         <span>

@@ -10,9 +10,14 @@ test("native HEC-RAS roughness zones are selectable and retain honest geometry s
   );
   test.skip(!candidate, "Compute the zoned-roughness HEC-RAS case first.");
   const results = await (await page.request.get("/api/results")).json();
-  const output = results.find(
+  const summary = results.find(
     (item: { id: string }) => item.id === candidate.result_id,
   );
+  expect(summary.frame_count).toBe(385);
+  expect(summary.frames).toBeUndefined();
+  const output = await (
+    await page.request.get(`/api/results/${summary.id}`)
+  ).json();
   expect(output.frames).toHaveLength(385);
   expect(output.provenance.geometry_and_roughness.bed_is_surveyed).toBe(false);
   expect(

@@ -13,9 +13,12 @@ test("the real prepared public case passes readiness and opens verified engine o
   const check = await page.request.post("/api/preflight", { data: scenario });
   expect((await check.json()).ready).toBeTruthy();
   const available = await (await page.request.get("/api/results")).json();
-  const output = available.find(
+  const summary = available.find(
     (item: { scenario: { id: string } }) => item.scenario.id === scenario.id,
   );
+  const output = await (
+    await page.request.get(`/api/results/${summary.id}`)
+  ).json();
   expect(output.frames.length).toBeGreaterThan(300);
   expect(output.engine).toBe("LISFLOOD-FP");
   expect(output.scenario.domain.mesh_m).toBe(100);

@@ -1,16 +1,25 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 from threading import Lock
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Query
+from fastapi import Path as FastApiPath
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .domain import prepare_domain
+from .engines import CACHED_DETAIL, cached_public_result
 from .models import Scenario, StrictModel
 from pydantic import Field
 from .store import ROOT, assets, read_json, write_json
-from .worker import bind, execute, preflight, runtimes
+from .worker import bind, execute, preflight, recover_interrupted_jobs, runtimes
 
-app = FastAPI(title="Pakistan Flood Lab — local model services", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app):
+    recover_interrupted_jobs()
+    yield
+
+
+app = FastAPI(title="Pakistan Flood Lab — local model services", version="1.0.0", lifespan=lifespan)
 (ROOT / "results").mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=ROOT / "results"), name="outputs")
 compute_lock = Lock()
@@ -133,9 +142,26 @@ def domain(scenario: Scenario):
         raise HTTPException(422, str(exc)) from exc
 
 
+SUMMARY_OMITS = {"frames", "hydrographs"}
+
+
+def result_summary(result):
+    """Listing entry: everything except per-frame overlays and gauge series."""
+    return {**{key: value for key, value in result.items() if key not in SUMMARY_OMITS}, "frame_count": len(result.get("frames", []))}
+
+
 @app.get("/api/results")
 def results():
-    return [result for path in sorted((ROOT / "results").glob("*/manifest.json")) if not (result := read_json(path)).get("superseded_by")]
+    manifests = (read_json(path) for path in sorted((ROOT / "results").glob("*/manifest.json")))
+    return [result_summary(result) for result in manifests if not result.get("superseded_by")]
+
+
+@app.get("/api/results/{result_id}")
+def result_detail(result_id: str = FastApiPath(pattern=r"^[A-Za-z0-9_-]{1,200}$")):
+    result = read_json(ROOT / "results" / result_id / "manifest.json")
+    if result is None:
+        raise HTTPException(404, "Unknown result")
+    return result
 
 
 @app.get("/api/prepared-cases")
@@ -159,30 +185,29 @@ def create_job(scenario: Scenario, background_tasks: BackgroundTasks):
     if not check["ready"]:
         raise HTTPException(409, check)
     binding = read_json(ROOT / "bindings" / f"{check['scenario_sha256']}.json", {})
-    public_project = Path(binding.get("project", ""))
-    if (scenario.hydraulics.engine == "LISFLOOD-FP" and (public_project / "screening.json").is_file()) or (scenario.hydraulics.engine == "HEC-RAS 2D" and (public_project / "hecras-case.json").is_file()):
-        if scenario.hydraulics.engine == "HEC-RAS 2D":
-            from .hecras import cached_result
-        else:
-            from .screening import cached_result
-        try:
-            cached = cached_result(scenario)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        if cached:
-            job_id = uuid4().hex
-            job = {"id": job_id, "state": "published", "scenario_sha256": check["scenario_sha256"], "result_id": cached["id"],
-                   "detail": "Loaded the verified output of this exact prepared case. Exploratory and uncalibrated."}
-            write_json(ROOT / "jobs" / job_id / "status.json", job)
-            write_json(ROOT / "jobs" / job_id / "scenario.json", scenario.model_dump(mode="json"))
-            return job
+    try:
+        cached = cached_public_result(scenario, binding.get("project"))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if cached:
+        job_id = uuid4().hex
+        job = {"id": job_id, "state": "published", "scenario_sha256": check["scenario_sha256"], "result_id": cached["id"],
+               "detail": CACHED_DETAIL}
+        write_json(ROOT / "jobs" / job_id / "status.json", job)
+        write_json(ROOT / "jobs" / job_id / "scenario.json", scenario.model_dump(mode="json"))
+        return job
     if not compute_lock.acquire(blocking=False):
         raise HTTPException(409, "A model is already computing in this local worker.")
-    job_id = uuid4().hex
-    job = {"id": job_id, "state": "queued", "scenario_sha256": check["scenario_sha256"]}
-    write_json(ROOT / "jobs" / job_id / "status.json", job)
-    write_json(ROOT / "jobs" / job_id / "scenario.json", scenario.model_dump(mode="json"))
-    background_tasks.add_task(background_compute, scenario, job_id)
+    try:
+        job_id = uuid4().hex
+        job = {"id": job_id, "state": "queued", "scenario_sha256": check["scenario_sha256"]}
+        write_json(ROOT / "jobs" / job_id / "status.json", job)
+        write_json(ROOT / "jobs" / job_id / "scenario.json", scenario.model_dump(mode="json"))
+        background_tasks.add_task(background_compute, scenario, job_id)
+    except BaseException:
+        # Until the task is scheduled, nothing else will release the lock.
+        compute_lock.release()
+        raise
     return job
 
 

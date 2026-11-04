@@ -1,4 +1,5 @@
 import type { Scenario } from "../data/scenarios";
+import type { Legend } from "./legend";
 
 export type Overlay = {
   url: string;
@@ -14,6 +15,8 @@ export type Result = {
   validation_status: string;
   validation_passed: boolean;
   vertical_datum: string;
+  /** Overlay class edges; absent on results published before per-result legends. */
+  legend?: Partial<Legend>;
   frames: {
     time: string;
     fields: { depth: Overlay; wse?: Overlay; velocity?: Overlay };
@@ -27,6 +30,10 @@ export type Result = {
     source: string;
     overlay?: Overlay;
   } | null;
+};
+/** `/api/results` listing entry; fetch `/api/results/{id}` for frames and hydrographs. */
+export type ResultSummary = Omit<Result, "frames" | "hydrographs"> & {
+  frame_count: number;
 };
 export type Hydrograph = {
   station_id: string;
@@ -80,18 +87,43 @@ export type Health = {
   };
 };
 
-export async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(
-    `/api/${path}`,
-    body === undefined
-      ? {}
-      : {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-  );
-  const raw = await response.text();
+/** Thrown when the caller aborts a request; work already started on the server may still finish. */
+export class CancelledError extends Error {
+  constructor() {
+    super(
+      "Cancelled. The local service may still finish work it had already started; check readiness again before running.",
+    );
+    this.name = "CancelledError";
+  }
+}
+
+export async function api<T>(
+  path: string,
+  body?: unknown,
+  options: { signal?: AbortSignal } = {},
+): Promise<T> {
+  let response: Response;
+  let raw: string;
+  try {
+    response = await fetch(
+      `/api/${path}`,
+      body === undefined
+        ? { signal: options.signal }
+        : {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: options.signal,
+          },
+    );
+    raw = await response.text();
+  } catch (error) {
+    if (options.signal?.aborted) throw new CancelledError();
+    throw new Error(
+      "Local data service is unavailable. Start the Python service on port 8010.",
+      { cause: error },
+    );
+  }
   let data;
   try {
     data = JSON.parse(raw);

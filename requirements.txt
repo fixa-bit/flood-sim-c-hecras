@@ -4,7 +4,7 @@
 # Install from the project root: python -m pip install -r requirements.txt
 # Node packages are locked separately by package-lock.json: npm ci
 # Data, external engines and migration instructions: requirement_data.txt
-# This snapshot matches server/requirements-lock.txt at capture time.
+# Supported top-level version ranges live in server/requirements.txt.
 # Other operating systems/Python versions may need different wheels or packages;
 # pywin32 and the current HEC integration require Windows.
 

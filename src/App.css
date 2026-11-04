@@ -757,6 +757,12 @@
   color: #819da8;
   white-space: nowrap;
 }
+.speed-select {
+  width: auto;
+  min-width: 44px;
+  padding: 3px 4px;
+  font-size: 9px;
+}
 .map-legend {
   display: flex;
   align-items: center;

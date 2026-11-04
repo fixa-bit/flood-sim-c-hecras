@@ -54,9 +54,13 @@ test("the prepared HEC-RAS case runs through the selected engine and opens nativ
     page.getByRole("combobox", { name: "Compute engine", exact: true }),
   ).toHaveValue("HEC-RAS 2D");
   const available = await (await page.request.get("/api/results")).json();
-  const output = available.find(
+  const summary = available.find(
     (item: { id: string }) => item.id === job.result_id,
   );
+  expect(summary.frame_count).toBe(385);
+  const output = await (
+    await page.request.get(`/api/results/${summary.id}`)
+  ).json();
   expect(output.engine).toBe("HEC-RAS 2D");
   expect(output.frames).toHaveLength(385);
   expect(output.provenance.numerical_review.passed).toBe(true);

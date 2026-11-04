@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import example from "../../examples/nowshera-2022.json" with { type: "json" };
+import { routeResults } from "./results";
 
 test("Nowshera pilot, upstream boundaries and no fabricated output", async ({
   page,
@@ -78,6 +79,28 @@ test("readiness and provenance report missing scientific inputs", async ({
   await expect(page.locator(".verification-list article")).toHaveCount(5);
 });
 
+test("a slow domain preparation can be cancelled and the editor recovers", async ({
+  page,
+}) => {
+  await page.route("**/api/domain", () => {
+    /* Never answer: simulates a stalled preparation. */
+  });
+  await page.goto("/");
+  const prepare = page.getByRole("button", { name: "Prepare domain" });
+  await expect(prepare).toBeEnabled();
+  await prepare.click();
+  await expect(page.getByRole("button", { name: "Preparing…" })).toBeDisabled();
+  await page
+    .getByRole("complementary", { name: "Scenario editor" })
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Cancelled.");
+  await expect(prepare).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Cancel", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("custom outlet supports planning and invalid values block preparation", async ({
   page,
 }) => {
@@ -150,9 +173,7 @@ test("published output plays on model time and compares only exact timestamps", 
       { time: "2022-08-20T01:00:00Z", fields: { depth: overlay } },
     ],
   };
-  await page.route("**/api/results", (route) =>
-    route.fulfill({ json: [a, b] }),
-  );
+  await routeResults(page, [a, b]);
   await page.goto("/");
   await page.getByRole("button", { name: "Model results" }).click();
   await page.getByLabel("Result A", { exact: true }).selectOption("test-a");

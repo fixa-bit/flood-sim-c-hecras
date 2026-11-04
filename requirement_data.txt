@@ -14,7 +14,7 @@ requirements.txt is the exact installed Python package snapshot, including
 transitive dependencies, scientific packages, data tools and test tools.
 server/requirements.txt and server/requirements-data.txt contain broader
 supported version ranges; they are NOT an exact environment snapshot.
-server/requirements-lock.txt currently matches the root requirements.txt pins.
+requirements.txt is the only exact snapshot (a duplicate lock file was removed).
 package-lock.json locks JavaScript packages, including transitive dependencies.
 Copy package.json, package-lock.json and .npmrc together; use npm ci to restore.
 No Python requirements file installs Node packages, engines or scientific data.

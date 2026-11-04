@@ -209,7 +209,10 @@ export function scenarioErrors(s: Scenario): string[] {
   return errors;
 }
 export const lakhToM3s = (lakh: number) => lakh * 100000 * 0.028316846592;
-export const boundsFor = (s: Scenario): [number, number, number, number] => {
+export const boundsFor = (s: {
+  outlet: Pick<Scenario["outlet"], "lat" | "lon">;
+  domain: Pick<Scenario["domain"], "radius_km">;
+}): [number, number, number, number] => {
   const dy = s.domain.radius_km / 111.32;
   const dx = dy / Math.cos((s.outlet.lat * Math.PI) / 180);
   return [

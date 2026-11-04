@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from .engines import CACHED_DETAIL, cached_public_result, public_case
 from .models import Scenario
 from .store import ROOT, assets, checked_asset, file_hash, read_json, scenario_hash, write_json
 
@@ -71,18 +72,14 @@ def preflight(s: Scenario):
     runtime = runtimes()
     if s.hydraulics.engine == "HEC-RAS 2D":
         add("runtime", runtime["hec_ras"] and runtime["ras_commander"], "Installed HEC-RAS and ras-commander[compute] are required.")
-        if binding and (Path(binding["project"]) / "hecras-case.json").is_file():
-            from .hecras import FORMAT
-            config = read_json(Path(binding["project"]) / "hecras-case.json")
-            add("hecras_format", config.get("format") == FORMAT, "Use the current prepared HEC-RAS public case.")
-            add("hecras_engine", runtime["hec_ras"] and file_hash(Path(runtime["hec_ras_exe"])) == config.get("engine_sha256"), "This exploratory HEC case requires the exact engine build recorded during preparation.")
     else:
         add("runtime", runtime["lisflood_fp"], "Set LISFLOOD_FP_EXE to a locally installed LISFLOOD-FP executable.")
-        if binding and (Path(binding["project"]) / "screening.json").is_file():
-            config = read_json(Path(binding["project"]) / "screening.json")
-            from .screening import FORMAT
-            add("screening_format", config.get("format") == FORMAT, "Use the current prepared public case with channel conditioning, river warm-up and a complete discharge cross-section; earlier preparation versions are superseded.")
-            add("screening_engine", runtime["lisflood_fp"] and file_hash(Path(runtime["lisflood_fp_exe"])) == config.get("engine_sha256"), "Exploratory screening requires the exact engine build recorded in its preparation review.")
+    case = public_case(s.hydraulics.engine, binding and binding["project"])
+    if case:
+        config = read_json(Path(binding["project"]) / case.marker)
+        add(f"{case.check_prefix}_format", config.get("format") == case.module().FORMAT, case.format_detail)
+        installed = runtime[case.runtime_key]
+        add(f"{case.check_prefix}_engine", installed and file_hash(Path(runtime[f"{case.runtime_key}_exe"])) == config.get("engine_sha256"), case.engine_detail)
     return {"scenario_sha256": digest, "ready": all(c["passed"] for c in checks), "checks": checks}
 
 
@@ -115,6 +112,71 @@ def bind(s: Scenario, project: Path, plan: str, review: str):
     return value
 
 
+ACTIVE_STATES = {"queued", "running"}
+
+
+def recover_interrupted_jobs():
+    """Fail jobs left active by a previous API process.
+
+    The compute lock lives in process memory, so at startup no job of this
+    process can be running; any queued/running status is from a process that
+    stopped mid-compute and would otherwise be polled forever.
+    """
+    recovered = []
+    for status_path in sorted((ROOT / "jobs").glob("*/status.json")):
+        try:
+            job = read_json(status_path)
+        except ValueError:
+            continue
+        if job and job.get("state") in ACTIVE_STATES:
+            job.update(state="failed", interrupted_state=job["state"],
+                       detail="The local API stopped before this job finished. Submit the case again; partial engine files remain in the job folder.")
+            write_json(status_path, job)
+            recovered.append(job["id"])
+    return recovered
+
+
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+
+
+def _folder_bytes(folder: Path):
+    return sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
+
+
+def prune_jobs(older_than_days: float = 14, apply: bool = False, now=None):
+    """Plan (and optionally apply) removal of job data that no current result depends on.
+
+    - Engine copies (``model/``) are removed only when the job's published result
+      is superseded or missing; the copy of a current result is its native-run record.
+    - Cache-hit records (no engine copy) older than ``older_than_days`` are removed.
+    - Active, unpublished ("computed"/"failed") jobs and job IDs cited in docs/ are kept.
+    """
+    import time
+    now = time.time() if now is None else now
+    cited = " ".join(path.read_text(encoding="utf-8", errors="ignore") for path in DOCS.glob("*.md")) if DOCS.is_dir() else ""
+    plan = []
+    for status_path in sorted((ROOT / "jobs").glob("*/status.json")):
+        folder = status_path.parent
+        job = read_json(status_path) or {}
+        if job.get("state") != "published" or folder.name in cited:
+            continue
+        result = read_json(ROOT / "results" / str(job.get("result_id")) / "manifest.json")
+        model = folder / "model"
+        if model.is_dir():
+            if result and not result.get("superseded_by"):
+                continue
+            reason = f"result superseded by {result['superseded_by']}" if result else "published result no longer exists"
+            plan.append({"job": folder.name, "remove": "model/", "reason": reason, "bytes": _folder_bytes(model), "path": model})
+        elif now - status_path.stat().st_mtime > older_than_days * 86400:
+            plan.append({"job": folder.name, "remove": "job record", "reason": f"cache-hit record older than {older_than_days:g} days",
+                         "bytes": _folder_bytes(folder), "path": folder})
+    if apply:
+        for item in plan:
+            shutil.rmtree(item["path"])
+    return {"applied": apply, "reclaimable_mb": round(sum(item["bytes"] for item in plan) / 1e6, 1),
+            "items": [{key: value for key, value in item.items() if key != "path"} for item in plan]}
+
+
 def execute(s: Scenario, job_id: str):
     folder = ROOT / "jobs" / job_id
     status_path = folder / "status.json"
@@ -123,18 +185,11 @@ def execute(s: Scenario, job_id: str):
         if not check["ready"]:
             raise ValueError("Preflight failed. Prepare the missing data and model inputs first.")
         binding = read_json(ROOT / "bindings" / f"{scenario_hash(s)}.json")
-        screening = Path(binding["project"]) / "screening.json"
-        hecras_case = Path(binding["project"]) / "hecras-case.json"
-        if (s.hydraulics.engine == "LISFLOOD-FP" and screening.is_file()) or (s.hydraulics.engine == "HEC-RAS 2D" and hecras_case.is_file()):
-            if s.hydraulics.engine == "HEC-RAS 2D":
-                from .hecras import cached_result
-            else:
-                from .screening import cached_result
-            cached = cached_result(s)
-            if cached:
-                write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": cached["id"],
-                    "detail": "Loaded the verified output of this exact prepared case. Exploratory and uncalibrated."})
-                return
+        cached = cached_public_result(s, binding["project"])
+        if cached:
+            write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": cached["id"],
+                                     "detail": CACHED_DETAIL})
+            return
         write_json(status_path, {"id": job_id, "state": "running", "scenario_sha256": scenario_hash(s)})
         project = folder / "model"
         shutil.copytree(binding["project"], project)
@@ -145,12 +200,6 @@ def execute(s: Scenario, job_id: str):
             success = RasCmdr.compute_plan(binding["plan"], ras_object=ras, verify=True, max_runtime=86400, num_cores=2)
             if not success:
                 raise RuntimeError("HEC-RAS did not report a successful compute. Inspect its model logs.")
-            if (project / "hecras-case.json").is_file():
-                from .hecras import finish_and_publish
-                result = finish_and_publish(s, project)
-                write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": result["id"],
-                    "detail": "HEC-RAS full SWE completed; native numerical checks passed and timestamped rasters are available. Exploratory and uncalibrated."})
-                return
         else:
             parameter = project / binding["plan"]
             if not parameter.resolve().is_relative_to(project.resolve()) or not parameter.is_file():
@@ -158,12 +207,12 @@ def execute(s: Scenario, job_id: str):
             with (folder / "engine.log").open("w", encoding="utf-8") as log:
                 subprocess.run([runtimes()["lisflood_fp_exe"], str(parameter)], cwd=project, check=True, timeout=86400, stdout=log, stderr=subprocess.STDOUT,
                                env={**os.environ, "OMP_NUM_THREADS": "2"}, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            if (project / "screening.json").is_file():
-                from .screening import finish_and_publish
-                result = finish_and_publish(s, project)
-                write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": result["id"],
-                    "detail": "External engine completed; numerical checks passed and timestamped output is available. Exploratory and uncalibrated."})
-                return
+        case = public_case(s.hydraulics.engine, project)
+        if case:
+            result = case.module().finish_and_publish(s, project)
+            write_json(status_path, {"id": job_id, "state": "published", "scenario_sha256": scenario_hash(s), "result_id": result["id"],
+                                     "detail": case.published_detail})
+            return
         write_json(status_path, {"id": job_id, "state": "computed", "scenario_sha256": scenario_hash(s),
                                  "detail": "Engine compute finished. Export and publish timestamped model rasters before playback; model review is required."})
     except Exception as exc:

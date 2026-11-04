@@ -15,6 +15,7 @@ export function ScenarioCaseRunner({
   outcome,
   onChange,
   onApply,
+  onCancel,
 }: {
   cases: ScenarioCase[];
   connected: boolean;
@@ -27,6 +28,8 @@ export function ScenarioCaseRunner({
     run: boolean,
     engine?: Scenario["hydraulics"]["engine"],
   ) => Promise<void>;
+  /** Present while a load/prepare request can still be aborted. */
+  onCancel?: () => void;
 }) {
   const [selected, setSelected] = useState("current");
   const [values, setValues] = useState("");
@@ -257,6 +260,11 @@ export function ScenarioCaseRunner({
         >
           {busy === "Case run" ? "Preparing case…" : "Prepare & run case"}
         </button>
+        {onCancel && (
+          <button className="secondary-button" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </div>
       <p className="case-help">
         Hydraulic runs currently support the Nowshera pilot. Complete inflows
