@@ -4,3 +4,4 @@ pyogrio>=0.13,<1
 pypdf>=6.21,<7
 netCDF4>=1.7,<2
 pymupdf>=1.27,<3
+xlrd>=2.0.1,<3

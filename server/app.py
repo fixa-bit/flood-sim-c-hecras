@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import gzip
+import json
 from pathlib import Path
 from uuid import uuid4
 from threading import Lock
@@ -40,8 +42,11 @@ def health():
 
 
 @app.get("/api/assets")
-def list_assets():
-    return assets()
+def list_assets(site: str | None = Query(None, pattern=r"^[a-z]{1,32}$")):
+    try:
+        return assets(site)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/terrain/metadata")
@@ -164,12 +169,101 @@ def result_detail(result_id: str = FastApiPath(pattern=r"^[A-Za-z0-9_-]{1,200}$"
     return result
 
 
+RESULT_ID = FastApiPath(pattern=r"^[A-Za-z0-9_-]{1,200}$")
+
+
+@app.get("/api/results/{result_id}/exposure")
+def result_exposure(result_id: str = RESULT_ID):
+    from .exposure import compute_exposure
+    if not (ROOT / "results" / result_id / "manifest.json").is_file():
+        raise HTTPException(404, "Unknown result")
+    try:
+        return {"available": True, **compute_exposure(result_id)}
+    except ValueError as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+@app.get("/api/results/{result_id}/exposure/columns")
+def result_exposure_columns(request: Request, result_id: str = RESULT_ID):
+    from .exposure import exposure_columns
+    if not (ROOT / "results" / result_id / "manifest.json").is_file():
+        raise HTTPException(404, "Unknown result")
+    try:
+        body = json.dumps({"available": True, **exposure_columns(result_id)}, separators=(",", ":")).encode()
+    except ValueError as exc:
+        return {"available": False, "reason": str(exc)}
+    # Hundreds of per-frame series compress roughly tenfold.
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(gzip.compress(body, 6), media_type="application/json",
+                        headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+    return Response(body, media_type="application/json")
+
+
+@app.get("/api/results/{result_id}/tributaries")
+def result_tributaries(result_id: str = RESULT_ID):
+    from .tributaries import audit
+    if not (ROOT / "results" / result_id / "manifest.json").is_file():
+        raise HTTPException(404, "Unknown result")
+    try:
+        return {"available": True, **audit(result_id)}
+    except ValueError as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+@app.get("/api/exposure")
+def exposure_layers():
+    from .exposure import layer_summary
+    return layer_summary()
+
+
+@app.get("/api/exposure/population.png")
+def exposure_population_overlay():
+    from .exposure import overlay_path
+    path = overlay_path()
+    if path is None:
+        raise HTTPException(404, "Population layer not acquired or changed; run python -m server.exposure acquire")
+    return Response(path.read_bytes(), media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/exposure/facilities")
+def exposure_facilities():
+    from .exposure import facilities_geojson
+    try:
+        return facilities_geojson()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.get("/api/prepared-cases")
 def list_prepared_cases():
     from .screening import prepared_cases
     hecras_case = read_json(ROOT / "hecras" / "case.json")
     variants = [read_json(path) for path in sorted((ROOT / "hecras" / "variants").glob("*.json"))]
-    return prepared_cases() + ([hecras_case] if hecras_case else []) + [case for case in variants if case.get("ready")]
+    from .warsak import prepared_cases as warsak_cases
+    return prepared_cases() + ([hecras_case] if hecras_case else []) + [case for case in variants if case.get("ready")] + warsak_cases()
+
+
+@app.get("/api/observations")
+def observation_summary():
+    """Stations with observed 2022 flows (FFC 06:00 readings, WAPDA daily values)."""
+    from .observations import observed
+    return observed() or {"stations": {}, "rules": [], "available": False}
+
+
+@app.get("/api/observations/{station_id}")
+def observation_rows(station_id: str = FastApiPath(pattern=r"^[a-z][a-z-]{1,40}$")):
+    from .observations import observed
+    result = observed(station_id)
+    if result is None:
+        raise HTTPException(404, "Observed table not built; run python -m server.observations build")
+    return result
+
+
+@app.get("/api/sites/warsak")
+def warsak_status():
+    """What the Warsak below-dam model has ready, and what it still needs."""
+    from .warsak import status
+    return status()
 
 
 def background_compute(scenario, job_id):

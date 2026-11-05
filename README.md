@@ -181,6 +181,48 @@ Refresh the workspace, select **Model results**, choose HEC-RAS as **Result A** 
 
 **Playback controls:** choose **1× / 4× / 16×** beside the timeline (1× shows one frame every 0.8 s). When focus is not in a form field, **Space** plays or pauses, **← / →** step one frame and **Shift + ← / →** step ten. Depth and speed use fixed legend bins. Water-surface (WSE) bins are fitted to each result: five equal classes across the 2nd–98th percentile of its WSE values, stored as `legend` in the result manifest. Results published before this change keep fixed WSE bins until restyled (see Maintenance).
 
+### 7. Exposure and tributaries
+
+Below a selected result, **Exposure at this model time** shows how many residents (WorldPop 2022) live in cells the model shows under ≥ 0.3 m and ≥ 1 m of water, the event peak, and which mapped health, school and emergency facilities (OpenStreetMap) are flooded. The map buttons **Population**, **Population 3D**, **Facilities** and **Tributaries** draw the same layers on the terrain. **Population 3D** raises a column of residents for every ~500 m cell that fills red from the ground as residents come under water during playback. Flooded facilities turn red with their depth. **Streams entering the model** lists every real stream crossing the model edge and whether the model gives it any water. These layers never enter a hydraulic model, and the counts are model-derived, not casualty or displacement estimates. Method, sources and findings, including the unrepresented Kalpani tributary: [exposure and tributary audit](docs/EXPOSURE_AND_TRIBUTARIES.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m server.exposure acquire            # WorldPop 2022 + OSM facilities
+.\.venv\Scripts\python.exe -m server.exposure compute <result-id>  # optional; the API computes on demand
+.\.venv\Scripts\python.exe -m server.tributaries names            # OSM waterway names (labels only)
+.\.venv\Scripts\python.exe -m server.tributaries audit <result-id>
+```
+
+### 8. Warsak below-dam site
+
+Warsak is a second hydraulic site with its own input catalog (`workspace/sites/warsak/assets.json`); Nowshera's catalog and bindings are untouched. Terrain, land cover, rivers, catchment, soil, the below-dam model area and the mapped-water channel are prepared, and a numerical smoke test passed. The model runs once a continuous Warsak Dam release record (ordinates at most 3 hours apart) is registered; the public 2022 readings are too sparse. Selecting **Warsak** shows its own example scenario. Details: [Warsak site](docs/WARSAK_SITE.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m server.warsak acquire     # inputs into the Warsak catalog
+.\.venv\Scripts\python.exe -m server.warsak geometry    # domain, grid, corridor; no inflow used
+.\.venv\Scripts\python.exe -m server.warsak status      # what is ready, what is missing
+.\.venv\Scripts\python.exe -m server.cli register inflow <release.csv> --site warsak --source <...> --license <...> --product <...>
+.\.venv\Scripts\python.exe -m server.warsak build       # condition, write and bind the LISFLOOD case
+```
+
+### 9. Warsak snapshots checked against Sentinel-1
+
+Steady LISFLOOD runs below Warsak Dam at observed FFC releases, compared with Sentinel-1 water maps from (nearly) the same time: 25 Aug 2022 (calibration; image 16 minutes after the 59,000-cusec reading) and 5 Sep (independent validation). Roughness was swept and barely matters; the estimated channel bed is the main limit. Results publish speed and a hazard count, and the app shows the satellite score and overlay. Details: [satellite calibration](docs/SATELLITE_CALIBRATION.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m server.satellite 2022-08-25 2022-09-05
+.\.venv\Scripts\python.exe -m server.warsak_snapshot sweep
+.\.venv\Scripts\python.exe -m server.warsak_snapshot publish
+```
+
+### 10. Observed 2022 flows
+
+One reviewed table of measured 2022 discharges at 25 stations: FFC daily reports (06:00 inflow/outflow, 1 Jul–11 Sep) and the WAPDA river-flow workbook (daily Tarbela, Nowshera, Mangla and Marala, all of 2022). Measured values only; unreadable lines are left out and listed. The **Simulation** tab shows them as **Observed 2022 flows** for the selected station. These are once-a-day values for display and model checking, not model forcing. Details: [observed flows](docs/OBSERVED_FLOWS_2022.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m server.observations acquire
+.\.venv\Scripts\python.exe -m server.observations build
+```
+
 Without terrain configuration the globe explicitly uses an ellipsoid. Optional `VITE_CESIUM_ION_TOKEN` enables World Terrain as **context only**. `VITE_LOCAL_TERRAIN_URL` should point to quantized-mesh terrain built from the same prepared FABDEM clip; automatic terrain tiling is a remaining integration. Copy `.env.example` to `.env` and restart Vite. Keep credentials out of Git.
 
 ## Checks

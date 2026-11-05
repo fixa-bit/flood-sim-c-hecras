@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { STATIONS } from "../data/stations";
-import { PILOT_ID, STARTING_STATIONS } from "../data/network";
+import { PILOT_ID, SITE_NOTES, STARTING_STATIONS } from "../data/network";
 
 const rank = (id: string) =>
   STARTING_STATIONS.indexOf(id) < 0 ? 100 : STARTING_STATIONS.indexOf(id);
@@ -74,6 +74,10 @@ export function StationCatalog({
             </span>
             {s.id === PILOT_ID ? (
               <span className="pilot-badge">PILOT</span>
+            ) : SITE_NOTES[s.id] ? (
+              <span className="pilot-badge site-badge" title={SITE_NOTES[s.id]}>
+                PREPARED
+              </span>
             ) : (
               <span className="station-arrow">↗</span>
             )}

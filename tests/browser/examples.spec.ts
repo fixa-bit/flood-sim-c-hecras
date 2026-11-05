@@ -1,9 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { openEditor } from "./panels";
 
 test("one-click examples load distinct editable scenarios and preserve the terrain binding", async ({
   page,
 }) => {
   await page.goto("/");
+  await openEditor(page);
   await expect(
     page.getByRole("heading", { name: "Example scenarios", exact: true }),
   ).toBeVisible();
@@ -69,6 +71,7 @@ test("one-click examples load distinct editable scenarios and preserve the terra
     expect(draft.domain.dem_sha256).toBe(assets.dem?.sha256 ?? null);
   }
   await page.reload();
+  await openEditor(page);
   await expect(page.getByLabel("Scenario name", { exact: true })).toHaveValue(
     "Example · Wetter monsoon +30%",
   );
@@ -77,6 +80,7 @@ test("one-click examples load distinct editable scenarios and preserve the terra
 test("example cards remain usable on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await openEditor(page);
   await page
     .getByRole("button", { name: "Load wetter monsoon", exact: true })
     .click();

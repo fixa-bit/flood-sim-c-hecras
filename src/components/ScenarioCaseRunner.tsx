@@ -267,7 +267,8 @@ export function ScenarioCaseRunner({
         )}
       </div>
       <p className="case-help">
-        Hydraulic runs currently support the Nowshera pilot. Complete inflows
+        Hydraulic runs support the Nowshera pilot; the Warsak below-dam case is
+        prepared and waits for a continuous dam-release record. Complete inflows
         and a prepared model matching these values are required. Play becomes
         available when timestamped flood results are published.
       </p>

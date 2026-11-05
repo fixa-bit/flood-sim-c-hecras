@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openCaseRunner, openEditor } from "./panels";
 
 test("the prepared HEC-RAS case runs through the selected engine and opens native output", async ({
   page,
@@ -17,10 +18,8 @@ test("the prepared HEC-RAS case runs through the selected engine and opens nativ
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  const runner = page.getByRole("region", {
-    name: "Run a scenario case",
-    exact: true,
-  });
+  await openEditor(page);
+  const runner = await openCaseRunner(page);
   await runner
     .getByRole("button", { name: "Load runnable public case", exact: true })
     .click();
@@ -90,10 +89,8 @@ test("the prepared HEC-RAS case runs through the selected engine and opens nativ
     page.getByLabel("Comparison split", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/B time offset:/)).toBeVisible();
-  await page
-    .locator(".globe-shell")
-    .screenshot({
-      path: "test-results/nowshera-hecras-lisflood-comparison.png",
-    });
+  await page.locator(".globe-shell").screenshot({
+    path: "test-results/nowshera-hecras-lisflood-comparison.png",
+  });
   expect(errors).toEqual([]);
 });

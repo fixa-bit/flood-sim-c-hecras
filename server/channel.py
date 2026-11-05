@@ -54,7 +54,11 @@ def normal_depth(discharge, width, slope, manning=.035):
     return (low + high) / 2
 
 
-def condition_channel(dem, fraction, surface, affine, discharge):
+def channel_profile(dem, fraction, surface, affine):
+    """Mapped-water corridor, centerline and monotone surface profile.
+
+    Needs no discharge, so a site can be checked before its inflow exists.
+    """
     cell = float(affine.a)
     components, _ = label(fraction >= .25)  # Four-connected resolved water only.
     west = set(components[:, 0]) - {0}
@@ -117,6 +121,15 @@ def condition_channel(dem, fraction, surface, affine, discharge):
     slope = float((levels[0] - levels[-1]) / (centers[-1] - centers[0]))
     if not 0 < slope < .02:
         raise ValueError("Mapped water-surface profile does not support a downstream slope.")
+    return {"corridor": corridor, "rows": rows, "cols": cols, "path_rc": path_rc, "chainage": chainage,
+            "positions": positions, "centers": centers, "widths": widths, "levels": levels, "slope": slope}
+
+
+def condition_channel(dem, fraction, surface, affine, discharge):
+    profile = channel_profile(dem, fraction, surface, affine)
+    corridor, rows, cols, path_rc = profile["corridor"], profile["rows"], profile["cols"], profile["path_rc"]
+    chainage, positions, centers = profile["chainage"], profile["positions"], profile["centers"]
+    widths, levels, slope = profile["widths"], profile["levels"], profile["slope"]
     depths = np.array([normal_depth(discharge, width, slope) for width in widths])
     estimated = np.interp(positions, centers, levels - depths)
     conditioned = dem.copy()

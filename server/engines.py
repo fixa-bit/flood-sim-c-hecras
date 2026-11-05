@@ -18,14 +18,13 @@ class PublicCase:
     format_detail: str
     engine_detail: str
     published_detail: str
+    module_name: str = ""
 
     def module(self) -> ModuleType:
-        # Imported lazily: both modules import worker, which imports this one.
-        if self.engine == "HEC-RAS 2D":
-            from . import hecras as module
-        else:
-            from . import screening as module
-        return module
+        # Imported lazily: these modules import worker, which imports this one.
+        import importlib
+        default = "hecras" if self.engine == "HEC-RAS 2D" else "screening"
+        return importlib.import_module(f".{self.module_name or default}", __package__)
 
 
 CASES = {
@@ -42,11 +41,25 @@ CASES = {
 }
 
 
+# Site cases with their own preparation module. Checked before CASES, since
+# each project carries exactly one marker file.
+SITE_CASES = [
+    PublicCase(
+        "LISFLOOD-FP", "warsak-screening.json", "warsak", "lisflood_fp",
+        "Use the current prepared Warsak below-dam case.",
+        "The Warsak case requires the exact LISFLOOD-FP build recorded in its preparation review.",
+        "External engine completed below Warsak Dam; numerical checks passed. Exploratory and uncalibrated; no downstream gauge to score against.",
+        module_name="warsak"),
+]
+
+
 def public_case(engine: str, project) -> PublicCase | None:
     """The adapter that prepared ``project`` for ``engine``, or None for a user model."""
-    case = CASES.get(engine)
-    if case and project and (Path(project) / case.marker).is_file():
-        return case
+    if not project:
+        return None
+    for case in [*SITE_CASES, CASES.get(engine)]:
+        if case and case.engine == engine and (Path(project) / case.marker).is_file():
+            return case
     return None
 
 

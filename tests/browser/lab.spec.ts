@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openPanel, openEditor } from "./panels";
 import example from "../../examples/nowshera-2022.json" with { type: "json" };
 import { routeResults } from "./results";
 
@@ -8,12 +9,14 @@ test("Nowshera pilot, upstream boundaries and no fabricated output", async ({
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
+  await openEditor(page);
   await expect(
     page.getByRole("heading", { name: "Nowshera / Kabul River" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Run hydraulic model" }),
   ).toBeDisabled();
+  await openPanel(page, "Simulation");
   await expect(page.getByText("Hydrograph awaits model output")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Warsak" })).toBeChecked();
   await expect(page.locator(".globe canvas")).toBeVisible({ timeout: 30000 });
@@ -33,27 +36,31 @@ test("upstream station selection changes downstream receptors", async ({
   page,
 }) => {
   await page.goto("/");
+  await openEditor(page);
   await page.getByRole("button", { name: "Tarbela Indus" }).click();
   await expect(
     page.getByRole("heading", { name: "Tarbela / Indus River" }),
   ).toBeVisible();
+  await openPanel(page, "Simulation");
   await expect(page.locator(".network-section")).toContainText(
     "Attock → Kalabagh → Chashma → Taunsa",
   );
   await expect(
     page.getByText(
-      "Planning available. Hydraulic compute is limited to the Nowshera pilot.",
+      "Planning available. Hydraulic compute is limited to the Nowshera and Warsak sites.",
     ),
   ).toBeVisible();
 });
 
 test("scenario presets persist and export versioned JSON", async ({ page }) => {
   await page.goto("/");
+  await openEditor(page);
   await page.getByLabel("Experiment", { exact: true }).selectOption("climate");
   await expect(page.getByLabel("Rain multiplier")).toHaveValue("1.3");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page.getByText("Scenario saved to this browser.")).toBeVisible();
   await page.reload();
+  await openEditor(page);
   await expect(page.getByLabel("Experiment", { exact: true })).toHaveValue(
     "climate",
   );
@@ -66,6 +73,7 @@ test("readiness and provenance report missing scientific inputs", async ({
   page,
 }) => {
   await page.goto("/");
+  await openEditor(page);
   await page.getByRole("button", { name: "Check readiness" }).click();
   await expect(page.locator(".preflight-list")).toContainText(
     "requirements to resolve",
@@ -86,6 +94,7 @@ test("a slow domain preparation can be cancelled and the editor recovers", async
     /* Never answer: simulates a stalled preparation. */
   });
   await page.goto("/");
+  await openEditor(page);
   const prepare = page.getByRole("button", { name: "Prepare domain" });
   await expect(prepare).toBeEnabled();
   await prepare.click();
@@ -105,6 +114,7 @@ test("custom outlet supports planning and invalid values block preparation", asy
   page,
 }) => {
   await page.goto("/");
+  await openEditor(page);
   await page
     .getByRole("button", { name: "Custom lat / long or gauge" })
     .click();
@@ -118,6 +128,7 @@ test("custom outlet supports planning and invalid values block preparation", asy
 test("mobile workspace fits without page overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await openEditor(page);
   await expect(
     page.getByRole("heading", { name: "Nowshera / Kabul River" }),
   ).toBeVisible();
@@ -175,6 +186,7 @@ test("published output plays on model time and compares only exact timestamps", 
   };
   await routeResults(page, [a, b]);
   await page.goto("/");
+  await openEditor(page);
   await page.getByRole("button", { name: "Model results" }).click();
   await page.getByLabel("Result A", { exact: true }).selectOption("test-a");
   await page.getByLabel("Result B", { exact: true }).selectOption("test-b");

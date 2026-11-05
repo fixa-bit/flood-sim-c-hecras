@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openCaseRunner } from "./panels";
 
 test("native HEC-RAS roughness zones are selectable and retain honest geometry status", async ({
   page,
@@ -33,10 +34,7 @@ test("native HEC-RAS roughness zones are selectable and retain honest geometry s
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  const runner = page.getByRole("region", {
-    name: "Run a scenario case",
-    exact: true,
-  });
+  const runner = await openCaseRunner(page);
   await runner
     .getByRole("combobox", { name: "Base scenario case" })
     .selectOption(`prepared:${candidate.scenario.id}`);

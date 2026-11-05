@@ -8,14 +8,14 @@ import rasterio
 from .domain import bounds_for, clip_raster, geojson_geometry, prepare_domain
 from .models import Scenario
 from .publish import inspect_hdf, publish, restyle_wse
-from .store import ROOT, assets, file_hash, write_json
+from .store import DEFAULT_SITE, ROOT, SITE_CATALOGS, assets, file_hash, save_assets, write_json
 from .worker import bind, preflight, prune_jobs
 from .hydrology import compute_hms
 
 KINDS = ["dem", "hydrography", "catchment", "soil", "moisture", "rainfall", "landcover", "inflow", "validation"]
 
 
-def register(kind, source_path, source, license, product):
+def register(kind, source_path, source, license, product, site=None):
     source_path = Path(source_path).resolve()
     if not source.strip() or not license.strip() or not product.strip():
         raise ValueError("Source, product and license are mandatory provenance.")
@@ -56,9 +56,9 @@ def register(kind, source_path, source, license, product):
         shutil.copy2(source_path, target)
     record = {"path": target.relative_to(ROOT).as_posix(), "sha256": digest, "source": source,
               "license": license, "product": product, "metadata": metadata}
-    catalog = assets()
+    catalog = assets(site)
     catalog[kind] = record
-    write_json(ROOT / "assets.json", catalog)
+    save_assets(catalog, site)
     return record
 
 
@@ -66,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     asset = commands.add_parser("register", help="Copy a local documented raster, vector or boundary CSV into the workspace")
+    asset.add_argument("--site", choices=sorted(SITE_CATALOGS), default=DEFAULT_SITE, help="Hydraulic site catalog (default: nowshera)")
     asset.add_argument("kind", choices=KINDS)
     asset.add_argument("path", type=Path)
     for flag in ["source", "license", "product"]:
@@ -101,7 +102,7 @@ def main():
     p.add_argument("--license", required=True)
     args = parser.parse_args()
     if args.command == "register":
-        result = register(args.kind, args.path, args.source, args.license, args.product)
+        result = register(args.kind, args.path, args.source, args.license, args.product, args.site)
     elif args.command in {"domain", "preflight", "bind", "stac-import", "compute-hms"}:
         scenario = Scenario.model_validate_json(args.scenario.read_text(encoding="utf-8-sig"))
         if args.command == "domain":

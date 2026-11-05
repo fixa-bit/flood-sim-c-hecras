@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openCaseRunner, openEditor } from "./panels";
 import example from "../../examples/nowshera-2022.json" with { type: "json" };
 import { routeResults } from "./results";
 
@@ -34,6 +35,7 @@ test("keyboard steps frames, speed applies, and the WSE legend follows the resul
     example,
   );
   await page.goto("/");
+  await openEditor(page);
   const slider = page.getByLabel("Model timestep", { exact: true });
   await expect(page.getByLabel("Result A", { exact: true })).toHaveValue(
     published.id,
@@ -94,10 +96,8 @@ test("loading and reopening an exact published case enables playback without ano
     if (request.url().endsWith("/api/jobs")) jobs++;
   });
   await page.goto("/");
-  const runner = page.getByRole("region", {
-    name: "Run a scenario case",
-    exact: true,
-  });
+  await openEditor(page);
+  const runner = await openCaseRunner(page);
   await runner
     .getByLabel("Base scenario case")
     .selectOption(`prepared:${scenario.id}`);
@@ -113,10 +113,14 @@ test("loading and reopening an exact published case enables playback without ano
   await page
     .getByRole("button", { name: "Play model output", exact: true })
     .click();
-  await expect(page.getByLabel("Model timestep", { exact: true })).toHaveValue(
-    "1",
-  );
+  // Frames advance every 800 ms; a busy first load can skip past frame 1
+  // before the check runs, so assert that playback moved, not which frame.
+  await expect(
+    page.getByLabel("Model timestep", { exact: true }),
+  ).not.toHaveValue("0");
   await page.reload();
+  await openEditor(page);
+  await openCaseRunner(page);
   await expect(
     page.getByRole("button", { name: "Play model output", exact: true }),
   ).toBeEnabled();

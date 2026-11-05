@@ -1,12 +1,15 @@
 import { expect, test } from "@playwright/test";
+import { openCaseRunner, openEditor } from "./panels";
 import example from "../../examples/nowshera-2022.json" with { type: "json" };
 
 async function openRunner(page: import("@playwright/test").Page) {
   await page.goto("/");
+  await openEditor(page);
+  const runner = await openCaseRunner(page);
   await expect(
-    page.getByRole("button", { name: "Load case values", exact: true }),
+    runner.getByRole("button", { name: "Load case values", exact: true }),
   ).toBeEnabled({ timeout: 30000 });
-  return page.getByRole("region", { name: "Run a scenario case", exact: true });
+  return runner;
 }
 
 test("nested case values fill multiple fields, save and reload without manual editing", async ({
@@ -59,6 +62,8 @@ test("nested case values fill multiple fields, save and reload without manual ed
   expect(scenario.forcing.soil_moisture).toBe("saturated");
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await page.reload();
+  await openEditor(page);
+  await openCaseRunner(page);
   await expect(page.getByLabel("Scenario name", { exact: true })).toHaveValue(
     "Public rainfall sensitivity case",
   );

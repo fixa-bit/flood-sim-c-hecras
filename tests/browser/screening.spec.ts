@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openCaseRunner, openEditor } from "./panels";
 
 test("the real prepared public case passes readiness and opens verified engine output for playback", async ({
   page,
@@ -45,10 +46,8 @@ test("the real prepared public case passes readiness and opens verified engine o
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/");
-  const runner = page.getByRole("region", {
-    name: "Run a scenario case",
-    exact: true,
-  });
+  await openEditor(page);
+  const runner = await openCaseRunner(page);
   const firstOverlayResponse = page.waitForResponse(
     (response) =>
       response.url().includes(`/outputs/${output.id}/00000-depth.png`),
@@ -148,10 +147,8 @@ test("the prepared case can be loaded on a phone without filling individual fiel
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  const runner = page.getByRole("region", {
-    name: "Run a scenario case",
-    exact: true,
-  });
+  await openEditor(page);
+  const runner = await openCaseRunner(page);
   await runner
     .getByRole("button", { name: "Load runnable public case", exact: true })
     .click();

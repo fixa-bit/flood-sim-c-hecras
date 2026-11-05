@@ -32,8 +32,31 @@ def scenario_hash(scenario: Scenario):
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def assets():
-    return read_json(ROOT / "assets.json", {})
+# Each hydraulic site keeps its own input catalog. Nowshera's stays at the
+# original path so its accepted bindings and hashes are untouched.
+SITE_CATALOGS = {"nowshera": "assets.json", "warsak": "sites/warsak/assets.json"}
+DEFAULT_SITE = "nowshera"
+
+
+def site_of(scenario: Scenario):
+    """The catalog a scenario reads; custom outlets keep the original catalog."""
+    station = scenario.outlet.station_id
+    return station if station in SITE_CATALOGS else DEFAULT_SITE
+
+
+def catalog_path(site=None):
+    site = site or DEFAULT_SITE
+    if site not in SITE_CATALOGS:
+        raise ValueError(f"Unknown hydraulic site {site!r}.")
+    return ROOT / SITE_CATALOGS[site]
+
+
+def assets(site=None):
+    return read_json(catalog_path(site), {})
+
+
+def save_assets(catalog, site=None):
+    write_json(catalog_path(site), catalog)
 
 
 def asset_path(asset):
@@ -43,10 +66,11 @@ def asset_path(asset):
     return path
 
 
-def checked_asset(key):
-    asset = assets().get(key)
+def checked_asset(key, site=None):
+    asset = assets(site).get(key)
     if not asset:
-        raise ValueError(f"Missing {key} asset. Register a documented local input with the CLI.")
+        where = f" for {site}" if site and site != DEFAULT_SITE else ""
+        raise ValueError(f"Missing {key} asset{where}. Register a documented local input with the CLI.")
     path = asset_path(asset)
     if not path.is_file() or file_hash(path) != asset["sha256"]:
         raise ValueError(f"The {key} asset is missing or its hash changed; register it again.")

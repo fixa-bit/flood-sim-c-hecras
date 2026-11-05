@@ -77,6 +77,133 @@ export type DomainResult = {
   catchment_status: string;
   catchment: object | null;
 };
+/** `/api/exposure`: context layers that never enter a hydraulic model. */
+export type ExposureLayers = {
+  population?: {
+    product: string;
+    license: string;
+    source: string;
+    total_population: number;
+    density_edges_per_km2: number[];
+    overlay: Overlay;
+    notes: string;
+  };
+  facilities?: {
+    product: string;
+    license: string;
+    osm_timestamp: string | null;
+    count: number;
+    counts: Record<string, number>;
+    notes: string;
+  };
+};
+export type Facility = {
+  id: string;
+  kind: "health" | "education" | "emergency";
+  amenity: string;
+  name: string | null;
+  coordinates: [number, number];
+  max_depth_m: number;
+  max_time: string;
+  first_flooded_time: string | null;
+  /** Depth at the facility per frame; omitted when it never exceeds 5 cm. */
+  depth_m?: number[];
+};
+export type Exposure =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      result_id: string;
+      thresholds_m: number[];
+      facility_flood_m: number;
+      population_in_extent: number;
+      population_excluded_start_wet: number;
+      /** `danger`: residents at hazard rating >= 0.75, when the result publishes speed. */
+      frames: { time: string; people: number[]; danger?: number }[];
+      hazard?: {
+        rating: string;
+        danger_threshold: number;
+        source: string;
+      } | null;
+      excluded_baseline?: string;
+      peak: { time: string; people: number[] };
+      facilities: {
+        in_extent: number;
+        ever_flooded: number;
+        items: Facility[];
+      };
+      inputs: {
+        population_product: string;
+        facilities_osm_timestamp: string | null;
+      };
+      columns?: { count: number; cell_deg: number; url: string };
+      method: string;
+      notes: string;
+    };
+/** Residents per flooded-frame series, trimmed of leading and trailing zeros. */
+export type ColumnSeries = { from: number; people: number[] } | null;
+export type PopulationColumn = {
+  /** [west, south, east, north] in degrees. */
+  bounds: [number, number, number, number];
+  people: number;
+  /** Viewer-terrain base height; absent when no local terrain is registered. */
+  ground_m?: number;
+  /** One series per exposure threshold; absent when the column never floods. */
+  flooded?: ColumnSeries[];
+};
+/** `/api/results/{id}/exposure/columns`: residents aggregated for 3D display. */
+export type PopulationColumns =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      cell_deg: number;
+      frames: number;
+      thresholds_m: number[];
+      ground_source: string | null;
+      columns: PopulationColumn[];
+    };
+export type Tributary = {
+  hyriv_id: number;
+  name: string | null;
+  upland_km2: number;
+  mean_discharge_m3s: number;
+  strahler_order: number;
+  edge: string;
+  crossing: [number, number];
+  joins: [number, number];
+  downstream_of_gauge: boolean | null;
+  represented: boolean;
+  boundary: string | null;
+  significance: "major" | "minor";
+  geometry: object;
+  reference_observation: {
+    river: string;
+    location: string;
+    report_date: string;
+    max_discharge_cusecs: number;
+    max_discharge_m3s: number;
+    reports: number;
+    source: string;
+    status: string;
+  } | null;
+};
+export type TributaryAudit =
+  | { available: false; reason: string }
+  | {
+      available: true;
+      engine: string;
+      entering: Tributary[];
+      summary: {
+        entering: number;
+        represented: number;
+        unrepresented: number;
+        unrepresented_major: string[];
+        unrepresented_upland_km2: number;
+        main_inflow_upland_km2: number | null;
+      };
+      method: string;
+    };
+
 export type Health = {
   status: string;
   runtimes: {

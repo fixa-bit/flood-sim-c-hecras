@@ -4,7 +4,9 @@ import {
   Cartesian3,
   CesiumTerrainProvider,
   Color,
+  ConstantProperty,
   Credit,
+  CustomDataSource,
   CustomHeightmapTerrainProvider,
   DiscardMissingTileImagePolicy,
   EllipsoidTerrainProvider,
@@ -15,6 +17,7 @@ import {
   HeadingPitchRange,
   ImageryLayer,
   Ion,
+  LabelGraphics,
   JulianDate,
   LabelStyle,
   Math as CesiumMath,
@@ -32,7 +35,13 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import { STATIONS } from "../data/stations";
 import { boundsFor } from "../data/scenarios";
 import type { Scenario } from "../data/scenarios";
-import type { DomainResult, Overlay } from "../lib/api";
+import type {
+  DomainResult,
+  Overlay,
+  PopulationColumns,
+  Tributary,
+} from "../lib/api";
+import { columnCount } from "../lib/exposure";
 
 type RiverContext = {
   available: boolean;
@@ -47,7 +56,65 @@ type Props = {
   compare?: Overlay;
   observed?: Overlay;
   time?: string;
+  /** Population density context overlay (never model input). */
+  population?: Overlay;
+  /** Depth (m) at each facility for the current frame, keyed by facility id. */
+  facilityDepths?: Record<string, number>;
+  /** Depth at which a facility counts as flooded. */
+  facilityFloodM?: number;
+  tributaries?: Tributary[];
+  /** 3D population columns for the shown result. */
+  columnsUrl?: string;
+  frameIndex?: number;
   onStation: (id: string) => void;
+};
+
+type FacilityFeature = {
+  id: string;
+  geometry: { coordinates: [number, number] };
+  properties: { kind: string; amenity: string; name: string | null };
+};
+// Matches server/exposure.py DENSITY_EDGES and DENSITY_COLORS.
+const POPULATION_KEY: [string, string][] = [
+  ["<250", "#ffeda0"],
+  ["250–1k", "#fec44f"],
+  ["1k–5k", "#fd8d3c"],
+  ["5k–20k", "#e34a33"],
+  [">20k", "#9e0142"],
+];
+// Column height per resident: 500 residents = 100 m. Linear, so the flooded
+// share of a column is its share of the height.
+const METRES_PER_PERSON = 0.2;
+// Gap between neighbouring columns, as a share of the cell size.
+const COLUMN_INSET = 0.08;
+const COLUMN_COLORS = {
+  deep: "#b5172f",
+  shallow: "#ff7a59",
+  dry: "#e9d8a6",
+};
+type ColumnSegments = { deep: number; shallow: number; dry: number };
+/**
+ * Fetch, retrying network errors and server errors with increasing waits.
+ * A restart of the local API must not leave terrain tiles permanently failed:
+ * Cesium never re-requests a tile whose first request was rejected.
+ */
+async function fetchWithRetry(url: string) {
+  const waits = [500, 1000, 2000, 4000, 8000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url);
+      if (response.ok || response.status < 500 || attempt >= waits.length)
+        return response;
+    } catch (error) {
+      if (attempt >= waits.length) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, waits[attempt]));
+  }
+}
+const FACILITY_COLORS: Record<string, string> = {
+  health: "#f4f1de",
+  education: "#c9b6ff",
+  emergency: "#ffd166",
 };
 
 export default function Globe({
@@ -57,6 +124,12 @@ export default function Globe({
   compare,
   observed,
   time,
+  population,
+  facilityDepths,
+  facilityFloodM = 0.3,
+  tributaries,
+  columnsUrl,
+  frameIndex = 0,
   onStation,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
@@ -69,8 +142,11 @@ export default function Globe({
   const [flat, setFlat] = useState(false);
   const [aerial, setAerial] = useState(true);
   const [basemapFallback, setBasemapFallback] = useState(false);
-  const { lat: outletLat, lon: outletLon, station_id: outletStation } =
-    scenario.outlet;
+  const {
+    lat: outletLat,
+    lon: outletLon,
+    station_id: outletStation,
+  } = scenario.outlet;
   const radiusKm = scenario.domain.radius_km;
   const riverKey = `${outletLon},${outletLat}`;
   const [riverFor, setRiverFor] = useState<{
@@ -82,10 +158,32 @@ export default function Globe({
   const [riverView, setRiverView] = useState(true);
   const [showRivers, setShowRivers] = useState(false);
   const [showBasin, setShowBasin] = useState(false);
+  const [showPopulation, setShowPopulation] = useState(false);
+  const [showFacilities, setShowFacilities] = useState(false);
+  const [showTributaries, setShowTributaries] = useState(true);
+  const [facilities, setFacilities] = useState<FacilityFeature[]>();
+  const [facilitySource, setFacilitySource] = useState<CustomDataSource>();
+  const [showColumns, setShowColumns] = useState(false);
+  const [columnsFor, setColumnsFor] = useState<{
+    url: string;
+    value: PopulationColumns;
+  }>();
+  const columnData =
+    columnsFor?.url === columnsUrl && columnsFor?.value.available
+      ? columnsFor.value
+      : undefined;
+  const [columnSource, setColumnSource] = useState<CustomDataSource>();
+  const [pickedColumn, setPickedColumn] = useState<number>();
+  const drawnColumns = useRef(new Map<number, ColumnSegments>());
   const [cameraRevision, setCameraRevision] = useState(0);
   const aerialLayer = useRef<ImageryLayer | null>(null);
   const streetLayer = useRef<ImageryLayer | null>(null);
   const aerialChoice = useRef(aerial);
+  // Requests to the online basemaps only. Terrain, model frames and other
+  // local layers never count: slow local tiles must not hide good imagery.
+  const imagery = useRef({ pending: 0, progressAt: 0 });
+  // A fallback retries online imagery by itself, backing off on repeats.
+  const fallbackRetryMs = useRef(30000);
   useLayoutEffect(() => {
     aerialChoice.current = aerial;
     select.current = onStation;
@@ -180,6 +278,21 @@ export default function Globe({
           true,
         ),
       });
+      for (const provider of [detail, photo]) {
+        const request = provider.requestImage.bind(provider);
+        provider.requestImage = (x, y, level, req) => {
+          const pending = request(x, y, level, req);
+          if (!pending) return pending; // throttled; Cesium asks again later
+          const state = imagery.current;
+          if (state.pending++ === 0) state.progressAt = performance.now();
+          const done = () => {
+            state.pending--;
+            state.progressAt = performance.now();
+          };
+          Promise.resolve(pending).then(done, done);
+          return pending;
+        };
+      }
       const photoLayer = v.imageryLayers.addImageryProvider(photo);
       photoLayer.show = aerialChoice.current;
       aerialLayer.current = photoLayer;
@@ -223,7 +336,7 @@ export default function Globe({
             setError("Terrain could not load. Using the ellipsoid.");
         });
       if (!promise) {
-        void fetch("/api/terrain/metadata")
+        void fetchWithRetry("/api/terrain/metadata")
           .then((response) => response.json())
           .then((meta) => {
             if (stopped || !meta.available) return;
@@ -238,7 +351,7 @@ export default function Globe({
                 );
                 return new Float32Array(bytes.buffer);
               }
-              const response = await fetch(
+              const response = await fetchWithRetry(
                 `/api/terrain/${level}/${x}/${y}.bin`,
               );
               if (!response.ok)
@@ -371,21 +484,29 @@ export default function Globe({
       streetLayer.current.show = !aerial && !basemapFallback;
     viewer.current?.scene.requestRender();
     const v = viewer.current;
-    if (!ready || !v || basemapFallback) return;
-    let waitingSince: number | undefined;
-    // A new case or camera position can stall imagery after the first load.
-    // Watch every loading period, including the Run → results transition.
+    if (!ready || !v) return;
+    if (basemapFallback) {
+      const delay = fallbackRetryMs.current;
+      fallbackRetryMs.current = Math.min(delay * 2, 300000);
+      const retry = setTimeout(() => {
+        setBasemapFallback(false);
+        setError((e) => (e.startsWith("Online imagery is slow") ? "" : e));
+      }, delay);
+      return () => clearTimeout(retry);
+    }
+    // A retry starts a fresh 12 s allowance.
+    imagery.current.progressAt = performance.now();
+    // Fall back only when online imagery requests are outstanding and none has
+    // completed for 12 s. Busy-but-progressing imagery, slow local terrain and
+    // model-frame layers (which keep the globe "loading" during playback) are
+    // not a stall.
     const timer = setInterval(() => {
       if (v.isDestroyed()) return;
-      if (v.scene.globe.tilesLoaded) {
-        waitingSince = undefined;
-        return;
-      }
-      waitingSince ??= performance.now();
-      if (performance.now() - waitingSince >= 10000) {
+      const { pending, progressAt } = imagery.current;
+      if (pending > 0 && performance.now() - progressAt >= 12000) {
         setBasemapFallback(true);
         setError(
-          "Online imagery is slow. Showing bundled context with local terrain and computed water; select Satellite to retry.",
+          "Online imagery is slow. Showing bundled context with local terrain and computed water; retrying automatically, or select Satellite to retry now.",
         );
         v.scene.requestRender();
       }
@@ -417,10 +538,7 @@ export default function Globe({
     if (!outletStation)
       v.entities.add({
         id: "custom-outlet",
-        position: Cartesian3.fromDegrees(
-          outletLon,
-          outletLat,
-        ),
+        position: Cartesian3.fromDegrees(outletLon, outletLat),
         point: { pixelSize: 12, color: Color.ORANGE },
       });
     if (domain?.snapped_outlet)
@@ -530,6 +648,281 @@ export default function Globe({
 
   useEffect(() => {
     const v = viewer.current;
+    if (!ready || !v || !population || !showPopulation) return;
+    let stopped = false;
+    let layer: ImageryLayer | undefined;
+    void SingleTileImageryProvider.fromUrl(population.url, {
+      rectangle: Rectangle.fromDegrees(...population.bounds),
+    })
+      .then((provider) => {
+        if (stopped) return;
+        // Directly above the basemaps, so model water is drawn on top of it.
+        const above = Math.max(
+          v.imageryLayers.indexOf(aerialLayer.current!),
+          v.imageryLayers.indexOf(streetLayer.current!),
+        );
+        layer = v.imageryLayers.addImageryProvider(provider, above + 1);
+        layer.alpha = 0.55;
+        v.scene.requestRender();
+      })
+      .catch(() => {
+        if (!stopped) setError("Population layer could not load.");
+      });
+    return () => {
+      stopped = true;
+      if (layer && !v.isDestroyed()) v.imageryLayers.remove(layer, true);
+    };
+  }, [ready, population, showPopulation]);
+
+  useEffect(() => {
+    if (!showFacilities || facilities) return;
+    const controller = new AbortController();
+    void fetch("/api/exposure/facilities", { signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : { features: [] }))
+      .then((data: { features: FacilityFeature[] }) =>
+        setFacilities(data.features),
+      )
+      .catch(() => {});
+    return () => controller.abort();
+  }, [showFacilities, facilities]);
+
+  useEffect(() => {
+    const v = viewer.current;
+    if (!ready || !v || !facilities?.length || !showFacilities) return;
+    const source = new CustomDataSource("facilities");
+    for (const facility of facilities) {
+      const [lon, lat] = facility.geometry.coordinates;
+      source.entities.add({
+        id: facility.id,
+        name: facility.properties.name ?? facility.properties.amenity,
+        position: Cartesian3.fromDegrees(lon, lat),
+        point: {
+          pixelSize: 7,
+          color: Color.fromCssColorString(
+            FACILITY_COLORS[facility.properties.kind] ?? "#ffffff",
+          ),
+          outlineColor: Color.fromCssColorString("#10252d"),
+          outlineWidth: 1.5,
+          heightReference: HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+    }
+    void v.dataSources.add(source);
+    // The Cesium data source is an external object created in this effect;
+    // the depth-colouring effect must re-run once it exists.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setFacilitySource(source);
+    v.scene.requestRender();
+    return () => {
+      setFacilitySource(undefined);
+      if (!v.isDestroyed()) v.dataSources.remove(source, true);
+    };
+  }, [ready, facilities, showFacilities]);
+
+  useEffect(() => {
+    const v = viewer.current;
+    if (!facilitySource || !v || !facilities) return;
+    // Flooded facilities turn red, grow and get a label; the rest keep their kind colour.
+    for (const facility of facilities) {
+      const entity = facilitySource.entities.getById(facility.id);
+      if (!entity?.point) continue;
+      const depth = facilityDepths?.[facility.id] ?? 0;
+      const flooded = depth >= facilityFloodM;
+      entity.point.color = new ConstantProperty(
+        Color.fromCssColorString(
+          flooded
+            ? "#ff4d4d"
+            : (FACILITY_COLORS[facility.properties.kind] ?? "#ffffff"),
+        ),
+      );
+      entity.point.pixelSize = new ConstantProperty(flooded ? 11 : 7);
+      entity.label = flooded
+        ? new LabelGraphics({
+            text: `${facility.properties.name ?? facility.properties.amenity} · ${depth.toFixed(1)} m`,
+            font: "11px sans-serif",
+            fillColor: Color.WHITE,
+            style: LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 3,
+            outlineColor: Color.fromCssColorString("#3a0d0d"),
+            pixelOffset: new Cartesian2(0, -16),
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          })
+        : undefined;
+    }
+    v.scene.requestRender();
+  }, [facilitySource, facilities, facilityDepths, facilityFloodM]);
+
+  useEffect(() => {
+    if (!showColumns || !columnsUrl || columnsFor?.url === columnsUrl) return;
+    const controller = new AbortController();
+    void fetch(columnsUrl, { signal: controller.signal })
+      .then((response) =>
+        response.ok
+          ? (response.json() as Promise<PopulationColumns>)
+          : { available: false as const, reason: response.statusText },
+      )
+      .then((value) => setColumnsFor({ url: columnsUrl, value }))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [showColumns, columnsUrl, columnsFor]);
+
+  // FABDEM ground heights match only the local FABDEM terrain; on any other
+  // terrain the columns stand on whatever ground Cesium draws.
+  const localGround = terrain.startsWith("FABDEM");
+  useEffect(() => {
+    const v = viewer.current;
+    if (!ready || !v || !columnData || !showColumns) return;
+    const source = new CustomDataSource("population-columns");
+    const reference = localGround
+      ? HeightReference.NONE
+      : HeightReference.RELATIVE_TO_GROUND;
+    const drawn = drawnColumns.current;
+    drawn.clear();
+    columnData.columns.forEach((column, index) => {
+      const [west, south, east, north] = column.bounds;
+      const inset = COLUMN_INSET * (east - west);
+      const rectangle = Rectangle.fromDegrees(
+        west + inset,
+        south + inset,
+        east - inset,
+        north - inset,
+      );
+      const ground = localGround ? (column.ground_m ?? 0) : 0;
+      const top = ground + column.people * METRES_PER_PERSON;
+      const segments = column.flooded
+        ? (["deep", "shallow", "dry"] as const)
+        : (["dry"] as const);
+      for (const segment of segments)
+        source.entities.add({
+          id: `population-column:${index}:${segment}`,
+          name: `${column.people.toLocaleString("en-US")} residents`,
+          rectangle: {
+            coordinates: rectangle,
+            height: ground,
+            extrudedHeight: segment === "dry" ? top : ground,
+            heightReference: reference,
+            extrudedHeightReference: reference,
+            show: segment === "dry",
+            material: Color.fromCssColorString(
+              COLUMN_COLORS[segment],
+            ).withAlpha(segment === "dry" ? 0.5 : 0.92),
+          },
+        });
+      drawn.set(index, { deep: 0, shallow: 0, dry: column.people });
+    });
+    void v.dataSources.add(source);
+    const picked = v.selectedEntityChanged.addEventListener((entity) => {
+      const match = /^population-column:(\d+):/.exec(entity?.id ?? "");
+      setPickedColumn(match ? Number(match[1]) : undefined);
+    });
+    // The Cesium data source is an external object created in this effect;
+    // the per-frame effect must re-run once it exists.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setColumnSource(source);
+    v.scene.requestRender();
+    return () => {
+      picked();
+      setColumnSource(undefined);
+      setPickedColumn(undefined);
+      if (!v.isDestroyed()) v.dataSources.remove(source, true);
+    };
+  }, [ready, columnData, showColumns, localGround]);
+
+  useEffect(() => {
+    const v = viewer.current;
+    if (!columnSource || !v || !columnData) return;
+    // Each flooded column fills from the ground: residents in >=1 m water,
+    // then 0.3-1 m, then the rest. Only columns that changed are rebuilt.
+    const drawn = drawnColumns.current;
+    columnData.columns.forEach((column, index) => {
+      if (!column.flooded) return;
+      const shallowOrDeeper = columnCount(column.flooded[0], frameIndex);
+      const deep = columnCount(column.flooded[1], frameIndex);
+      const next = {
+        deep,
+        shallow: shallowOrDeeper - deep,
+        dry: Math.max(0, column.people - shallowOrDeeper),
+      };
+      const last = drawn.get(index);
+      if (
+        last &&
+        last.deep === next.deep &&
+        last.shallow === next.shallow &&
+        last.dry === next.dry
+      )
+        return;
+      drawn.set(index, next);
+      let base = localGround ? (column.ground_m ?? 0) : 0;
+      for (const segment of ["deep", "shallow", "dry"] as const) {
+        const rectangle = columnSource.entities.getById(
+          `population-column:${index}:${segment}`,
+        )?.rectangle;
+        if (!rectangle) continue;
+        const top = base + next[segment] * METRES_PER_PERSON;
+        rectangle.show = new ConstantProperty(next[segment] > 0);
+        rectangle.height = new ConstantProperty(base);
+        rectangle.extrudedHeight = new ConstantProperty(top);
+        base = top;
+      }
+    });
+    v.scene.requestRender();
+  }, [columnSource, columnData, frameIndex, localGround]);
+
+  useEffect(() => {
+    const v = viewer.current;
+    if (!ready || !v || !tributaries?.length || !showTributaries) return;
+    const source = new CustomDataSource("tributaries");
+    for (const item of tributaries) {
+      const coordinates = (item.geometry as { coordinates: [number, number][] })
+        .coordinates;
+      const color = Color.fromCssColorString(
+        item.represented ? "#6ee7a8" : "#ff9f43",
+      );
+      source.entities.add({
+        id: `tributary:${item.hyriv_id}`,
+        polyline: {
+          positions: Cartesian3.fromDegreesArray(coordinates.flat()),
+          width: item.significance === "major" ? 4 : 2,
+          material: color.withAlpha(item.significance === "major" ? 0.95 : 0.7),
+          clampToGround: true,
+        },
+      });
+      if (item.significance === "major")
+        source.entities.add({
+          id: `tributary-entry:${item.hyriv_id}`,
+          position: Cartesian3.fromDegrees(...item.crossing),
+          point: {
+            pixelSize: 9,
+            color,
+            outlineColor: Color.fromCssColorString("#10252d"),
+            outlineWidth: 2,
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: `${item.name ?? "Stream"} · ${Math.round(item.upland_km2).toLocaleString("en-US")} km² · ${item.represented ? "inflow" : "no inflow"}`,
+            font: "12px sans-serif",
+            fillColor: color,
+            style: LabelStyle.FILL_AND_OUTLINE,
+            outlineWidth: 3,
+            outlineColor: Color.fromCssColorString("#10252d"),
+            pixelOffset: new Cartesian2(0, -18),
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+    }
+    void v.dataSources.add(source);
+    v.scene.requestRender();
+    return () => {
+      if (!v.isDestroyed()) v.dataSources.remove(source, true);
+    };
+  }, [ready, tributaries, showTributaries]);
+
+  useEffect(() => {
+    const v = viewer.current;
     if (v && ready && time) {
       v.clock.currentTime = JulianDate.fromIso8601(time);
       v.scene.requestRender();
@@ -615,6 +1008,40 @@ export default function Globe({
         >
           River lines
         </button>
+        {population && (
+          <button
+            aria-pressed={showPopulation}
+            className={showPopulation ? "active" : ""}
+            onClick={() => setShowPopulation(!showPopulation)}
+          >
+            Population
+          </button>
+        )}
+        {columnsUrl && (
+          <button
+            aria-pressed={showColumns}
+            className={showColumns ? "active" : ""}
+            onClick={() => setShowColumns(!showColumns)}
+          >
+            Population 3D
+          </button>
+        )}
+        <button
+          aria-pressed={showFacilities}
+          className={showFacilities ? "active" : ""}
+          onClick={() => setShowFacilities(!showFacilities)}
+        >
+          Facilities
+        </button>
+        {!!tributaries?.length && (
+          <button
+            aria-pressed={showTributaries}
+            className={showTributaries ? "active" : ""}
+            onClick={() => setShowTributaries(!showTributaries)}
+          >
+            Tributaries
+          </button>
+        )}
         {domain?.catchment && (
           <button
             aria-pressed={showBasin}
@@ -643,6 +1070,56 @@ export default function Globe({
             : "Station positions are approximate until snapped and reviewed."}
         </small>
       </div>
+      {((population && showPopulation) || (columnData && showColumns)) && (
+        <div className="map-keys">
+          {population && showPopulation && (
+            <div className="population-key" aria-label="Population density key">
+              People / km²
+              {POPULATION_KEY.map(([label, color]) => (
+                <span key={label}>
+                  <i style={{ background: color }} /> {label}
+                </span>
+              ))}
+            </div>
+          )}
+          {columnData && showColumns && (
+            <div
+              className="population-key column-key"
+              aria-label="Population column key"
+            >
+              Residents · 100 m = {Math.round(100 / METRES_PER_PERSON)}
+              <span>
+                <i style={{ background: COLUMN_COLORS.deep }} /> in ≥
+                {columnData.thresholds_m[1]} m water
+              </span>
+              <span>
+                <i style={{ background: COLUMN_COLORS.shallow }} />{" "}
+                {columnData.thresholds_m[0]}–{columnData.thresholds_m[1]} m
+              </span>
+              <span>
+                <i style={{ background: COLUMN_COLORS.dry }} /> below{" "}
+                {columnData.thresholds_m[0]} m or dry
+              </span>
+            </div>
+          )}
+          {pickedColumn !== undefined &&
+            columnData?.columns[pickedColumn] &&
+            showColumns && (
+              <ColumnReadout
+                people={columnData.columns[pickedColumn].people}
+                shallow={columnCount(
+                  columnData.columns[pickedColumn].flooded?.[0],
+                  frameIndex,
+                )}
+                deep={columnCount(
+                  columnData.columns[pickedColumn].flooded?.[1],
+                  frameIndex,
+                )}
+                thresholds={columnData.thresholds_m}
+              />
+            )}
+        </div>
+      )}
       {compare && (
         <div className="map-split">
           <label>
@@ -659,5 +1136,26 @@ export default function Globe({
         </div>
       )}
     </div>
+  );
+}
+
+function ColumnReadout({
+  people,
+  shallow,
+  deep,
+  thresholds,
+}: {
+  people: number;
+  shallow: number;
+  deep: number;
+  thresholds: number[];
+}) {
+  const format = (n: number) => n.toLocaleString("en-US");
+  return (
+    <p className="column-readout" role="status">
+      <strong>{format(people)} residents</strong> in this column ·{" "}
+      {format(shallow)} in ≥{thresholds[0]} m water, {format(deep)} in ≥
+      {thresholds[1]} m now
+    </p>
   );
 }

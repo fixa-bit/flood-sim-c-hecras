@@ -109,6 +109,18 @@ export function ResultDetails(props: {
   return (
     <div className="result-details">
       <span>{result.validation_status}</span>
+      {result.extent_validation?.csi != null && (
+        <span className="extent-score" title={result.extent_validation.source}>
+          Satellite check at{" "}
+          {new Date(result.extent_validation.time)
+            .toISOString()
+            .slice(0, 16)
+            .replace("T", " ")}{" "}
+          UTC: CSI {result.extent_validation.csi.toFixed(2)} · POD{" "}
+          {result.extent_validation.pod?.toFixed(2) ?? "—"} · FAR{" "}
+          {result.extent_validation.far?.toFixed(2) ?? "—"}
+        </span>
+      )}
       {frame && !frame.fields[props.field] && (
         <strong>This field was not exported for this frame.</strong>
       )}
@@ -176,7 +188,9 @@ export function PlaybackBar(props: {
       </button>
       <div className="time-label">
         <span>MODEL TIME</span>
-        <strong>{enabled ? utc(props.time) : "Awaiting hydraulic output"}</strong>
+        <strong>
+          {enabled ? utc(props.time) : "Awaiting hydraulic output"}
+        </strong>
       </div>
       <input
         aria-label="Model timestep"
@@ -208,7 +222,13 @@ export function PlaybackBar(props: {
   );
 }
 
-export function MapLegend({ field, result }: { field: Field; result?: Result }) {
+export function MapLegend({
+  field,
+  result,
+}: {
+  field: Field;
+  result?: Result;
+}) {
   return (
     <div className="map-legend">
       <span>{FIELD_TITLES[field]}</span>

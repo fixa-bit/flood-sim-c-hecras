@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from .engines import CACHED_DETAIL, cached_public_result, public_case
 from .models import Scenario
-from .store import ROOT, assets, checked_asset, file_hash, read_json, scenario_hash, write_json
+from .store import ROOT, SITE_CATALOGS, assets, checked_asset, file_hash, read_json, scenario_hash, site_of, write_json
 
 
 def runtimes():
@@ -27,35 +27,37 @@ def preflight(s: Scenario):
     checks = []
     def add(key, passed, detail):
         checks.append({"key": key, "passed": bool(passed), "detail": detail})
-    add("pilot", s.outlet.station_id == "nowshera", "Nowshera is the first hydraulic pilot; other stations and custom outlets support planning only.")
+    site = site_of(s)
+    add("pilot", s.outlet.station_id in SITE_CATALOGS, "Hydraulic runs support the prepared Nowshera and Warsak sites; other stations and custom outlets support planning only.")
     required = ["dem", "hydrography", "catchment", "soil", "landcover"]
     required += ["inflow"] if s.forcing.mode == "inflow_hydrograph" else ["rainfall"]
     if s.forcing.soil_moisture == "SMAP":
         required += ["moisture"]
     for key in required:
         try:
-            asset, _ = checked_asset(key)
+            asset, _ = checked_asset(key, site)
             add(key, True, f"{asset['source']} · SHA-256 verified")
         except ValueError as exc:
             add(key, False, str(exc))
-    dem = assets().get("dem")
+    catalog = assets(site)
+    dem = catalog.get("dem")
     add("dem_hash", dem and s.domain.dem_sha256 == dem["sha256"], "Bind the scenario to the registered source DEM SHA-256.")
     digest = scenario_hash(s)
     domain = read_json(ROOT / "domains" / digest / "domain.json")
-    hashes = {key: asset["sha256"] for key, asset in assets().items() if key in {"dem", "soil", "moisture", "rainfall", "landcover", "hydrography", "catchment"}}
+    hashes = {key: asset["sha256"] for key, asset in catalog.items() if key in {"dem", "soil", "moisture", "rainfall", "landcover", "hydrography", "catchment"}}
     domain_valid = domain and domain.get("catchment") and domain.get("input_hashes") == hashes
     if domain_valid:
         domain_valid = all((ROOT / "domains" / digest / item["file"]).is_file() and file_hash(ROOT / "domains" / digest / item["file"]) == item["sha256"] for item in domain["clips"].values())
     add("domain", domain_valid, "Prepare the exact scenario domain with a snapped outlet and supplied catchment delineation. Input hashes must still match.")
-    if s.forcing.mode == "inflow_hydrograph" and "inflow" in assets():
+    if s.forcing.mode == "inflow_hydrograph" and "inflow" in catalog:
         from datetime import datetime
-        coverage = assets()["inflow"].get("metadata", {}).get("coverage", {})
+        coverage = catalog["inflow"].get("metadata", {}).get("coverage", {})
         selected = s.forcing.upstream_station_ids or [s.outlet.station_id]
         covered = all(station in coverage and datetime.fromisoformat(coverage[station][0]) <= s.time.start and datetime.fromisoformat(coverage[station][1]) >= s.time.end for station in selected)
         add("boundary_coverage", covered, "Every selected inflow boundary must cover the full model time window in m³/s; contributing lateral inflows remain part of the model review.")
     add("bias_correction", s.forcing.bias_correction.strip(), "Document rainfall bias correction, or explain why rainfall is unused for a gauge-driven run.")
     if s.forcing.inflow_asset:
-        add("inflow_hash", assets().get("inflow", {}).get("sha256") == s.forcing.inflow_asset, "The selected inflow SHA-256 must match the registered boundary file.")
+        add("inflow_hash", catalog.get("inflow", {}).get("sha256") == s.forcing.inflow_asset, "The selected inflow SHA-256 must match the registered boundary file.")
     add("structures", all(item.specification.strip() for item in s.hydraulics.structures), "Structures need geometry, operation and breach/release timing in the prepared model.")
     if s.kind == "design_storm":
         add("idf", "idf" in s.provenance.notes.lower(), "Document the local IDF source and design hyetograph; an entered return period is not evidence.")
@@ -65,7 +67,7 @@ def preflight(s: Scenario):
         add("model_engine", binding.get("engine") == s.hydraulics.engine, "The prepared model must use the selected simulation engine.")
         add("model_scenario", binding.get("scenario_sha256") == digest, "The prepared model must match the exact scenario being submitted.")
         if binding.get("asset_hashes") is not None:
-            add("model_assets", all(assets().get(key, {}).get("sha256") == digest for key, digest in binding["asset_hashes"].items()), "Registered model inputs must match the prepared project's source hashes.")
+            add("model_assets", all(catalog.get(key, {}).get("sha256") == digest for key, digest in binding["asset_hashes"].items()), "Registered model inputs must match the prepared project's source hashes.")
         for item in binding["files"]:
             path = Path(binding["project"]) / item["path"]
             add(f"model:{item['path']}", path.is_file() and file_hash(path) == item["sha256"], "Prepared model input hash must match its binding.")
@@ -107,7 +109,7 @@ def bind(s: Scenario, project: Path, plan: str, review: str):
     if not files or s.hydraulics.engine == "HEC-RAS 2D" and not list(project.glob(f"*.p{plan}")):
         raise ValueError("Prepared project is empty or the requested RAS plan is missing.")
     value = {"scenario_sha256": scenario_hash(s), "project": str(project), "plan": plan, "review": review, "files": files, "engine": s.hydraulics.engine,
-             "asset_hashes": {key: value["sha256"] for key, value in assets().items() if key != "validation"}}
+             "asset_hashes": {key: value["sha256"] for key, value in assets(site_of(s)).items() if key != "validation"}}
     write_json(ROOT / "bindings" / f"{scenario_hash(s)}.json", value)
     return value
 

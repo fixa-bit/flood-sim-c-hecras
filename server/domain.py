@@ -9,7 +9,7 @@ from shapely.geometry import Point, box, mapping, shape
 from shapely.ops import nearest_points, transform
 from pyproj import Transformer
 from .models import Scenario
-from .store import ROOT, assets, checked_asset, file_hash, read_json, scenario_hash, write_json
+from .store import ROOT, assets, checked_asset, file_hash, read_json, scenario_hash, site_of, write_json
 
 
 def bounds_for(s: Scenario):
@@ -31,7 +31,7 @@ def geojson_geometry(path: Path, allowed):
 
 
 def snap_outlet(s: Scenario):
-    _, path = checked_asset("hydrography")
+    _, path = checked_asset("hydrography", site_of(s))
     _, geometries = geojson_geometry(path, {"LineString", "MultiLineString"})
     forward = Transformer.from_crs("EPSG:4326", s.domain.model_crs, always_xy=True).transform
     reverse = Transformer.from_crs(s.domain.model_crs, "EPSG:4326", always_xy=True).transform
@@ -67,29 +67,30 @@ def clip_raster(source: Path, destination: Path, wgs84_bounds):
 
 
 def prepare_domain(s: Scenario):
-    dem, dem_path = checked_asset("dem")
+    site = site_of(s)
+    dem, dem_path = checked_asset("dem", site)
     if s.domain.dem_sha256 and s.domain.dem_sha256 != dem["sha256"]:
         raise ValueError("Scenario DEM hash differs from the registered source.")
     bounds = bounds_for(s)
     key = scenario_hash(s)
     folder = ROOT / "domains" / key
     cached = read_json(folder / "domain.json")
-    input_hashes = {key: asset["sha256"] for key, asset in assets().items() if key in {"dem", "soil", "moisture", "rainfall", "landcover", "hydrography", "catchment"}}
+    input_hashes = {key: asset["sha256"] for key, asset in assets(site).items() if key in {"dem", "soil", "moisture", "rainfall", "landcover", "hydrography", "catchment"}}
     for kind in input_hashes:
-        checked_asset(kind)
+        checked_asset(kind, site)
     if cached and cached.get("input_hashes") == input_hashes and all((folder / item["file"]).is_file() and file_hash(folder / item["file"]) == item["sha256"] for item in cached["clips"].values()):
         return cached
     snapped = snap_outlet(s)
     clips = {}
     for kind in ["dem", "soil", "moisture", "rainfall", "landcover"]:
-        if kind not in assets():
+        if kind not in assets(site):
             continue
-        asset, path = checked_asset(kind)
+        asset, path = checked_asset(kind, site)
         output = folder / f"{kind}.tif"
         clips[kind] = {**clip_raster(path, output, bounds), "file": output.name, "source_sha256": asset["sha256"], "source": asset["source"], "license": asset["license"]}
     basin = None
-    if "catchment" in assets():
-        asset, path = checked_asset("catchment")
+    if "catchment" in assets(site):
+        asset, path = checked_asset("catchment", site)
         data, polygons = geojson_geometry(path, {"Polygon", "MultiPolygon"})
         outlet = Point(snapped["lon"], snapped["lat"])
         matches = [g for g in polygons if g.covers(outlet)]

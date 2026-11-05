@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { ComponentProps } from "react";
-import { PILOT_ID } from "../data/network";
+import { HYDRAULIC_SITES, SITE_NOTES } from "../data/network";
 import type { Scenario } from "../data/scenarios";
 import type { Preflight } from "../lib/api";
 import type { Job } from "../hooks/useJobPolling";
@@ -23,6 +23,7 @@ type Props = ComponentProps<typeof ScenarioFields> & {
   onSave: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
+  onClose: () => void;
 };
 
 export function ScenarioEditor({
@@ -40,6 +41,7 @@ export function ScenarioEditor({
   onSave,
   onExport,
   onImport,
+  onClose,
   ...fields
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -48,6 +50,14 @@ export function ScenarioEditor({
     <aside className="scenario-panel" aria-label="Scenario editor">
       <div className="panel-label">
         02 / SCENARIO DEFINITION <span>v1</span>
+        <button
+          className="editor-close"
+          aria-label="Close scenario editor"
+          title="Close"
+          onClick={onClose}
+        >
+          ×
+        </button>
       </div>
       <div className="editor-title">
         <h2>Shape the scenario.</h2>
@@ -121,9 +131,10 @@ export function ScenarioEditor({
           Run hydraulic model <span>→</span>
         </button>
         <small className="field-help">
-          {stationId !== PILOT_ID
-            ? "Planning available. Hydraulic compute is limited to the Nowshera pilot."
-            : "Compute unlocks when real data and a reviewed model pass preflight."}
+          {!HYDRAULIC_SITES.includes(stationId)
+            ? "Planning available. Hydraulic compute is limited to the Nowshera and Warsak sites."
+            : (SITE_NOTES[stationId] ??
+              "Compute unlocks when real data and a reviewed model pass preflight.")}
         </small>
         {job && (
           <p className="job-state" role="status">

@@ -53,6 +53,13 @@ export function upstreamOf(id: string): string[] {
   );
 }
 export const PILOT_ID = "nowshera";
+/** Stations with their own prepared hydraulic site (see server/store.py). */
+export const HYDRAULIC_SITES = [PILOT_ID, "warsak"];
+/** What each non-pilot site still needs before it can run. */
+export const SITE_NOTES: Record<string, string> = {
+  warsak:
+    "Warsak inputs and the below-dam model area are prepared. Runs start once a continuous Warsak Dam release record is registered.",
+};
 export const STARTING_STATIONS = [
   "nowshera",
   "warsak",

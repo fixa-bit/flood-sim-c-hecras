@@ -1,6 +1,18 @@
 import type { Hydrograph as Graph } from "../lib/api";
 
-export function Hydrograph({ graph, time }: { graph?: Graph; time?: string }) {
+/**
+ * `width` is the drawing width in SVG units. A narrower drawing keeps the
+ * axis text readable when the chart sits in a narrow column.
+ */
+export function Hydrograph({
+  graph,
+  time,
+  width = 760,
+}: {
+  graph?: Graph;
+  time?: string;
+  width?: number;
+}) {
   if (!graph?.samples.length)
     return (
       <div className="chart-empty">
@@ -26,7 +38,7 @@ export function Hydrograph({ graph, time }: { graph?: Graph; time?: string }) {
       ]),
     ) * 1.1;
   const x = (t: string) =>
-    55 + ((Date.parse(t) - start) / (end - start || 1)) * 680;
+    55 + ((Date.parse(t) - start) / (end - start || 1)) * (width - 80);
   const y = (v: number) => 155 - (v / max) * 130;
   const path = (key: "observed_m3s" | "simulated_m3s") => {
     let move = true;
@@ -48,7 +60,7 @@ export function Hydrograph({ graph, time }: { graph?: Graph; time?: string }) {
   return (
     <div className="chart">
       <svg
-        viewBox="0 0 760 195"
+        viewBox={`0 0 ${width} 195`}
         role="img"
         aria-label={`Observed and modeled discharge at ${graph.station_id}`}
       >
@@ -57,7 +69,7 @@ export function Hydrograph({ graph, time }: { graph?: Graph; time?: string }) {
             <line
               x1="55"
               y1={y(v * max)}
-              x2="735"
+              x2={width - 25}
               y2={y(v * max)}
               stroke="#253c43"
             />
@@ -107,7 +119,7 @@ export function Hydrograph({ graph, time }: { graph?: Graph; time?: string }) {
         <text x="55" y="179">
           {samples[0].time.slice(0, 10)}
         </text>
-        <text x="735" y="179" textAnchor="end">
+        <text x={width - 25} y="179" textAnchor="end">
           {samples.at(-1)!.time.slice(0, 10)}
         </text>
         <text x="55" y="10">

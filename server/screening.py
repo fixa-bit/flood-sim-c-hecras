@@ -264,16 +264,24 @@ def cached_result(s):
     return result
 
 
-def finish_and_publish(s, project):
+def finish_and_publish(s, project, marker="screening.json", fmt=FORMAT):
+    """Check and publish a finished LISFLOOD-FP ACC run.
+
+    Defaults are the Nowshera case. Another site passes its own marker and
+    format; its configuration names the output root, gauge and status text,
+    and it has no Nowshera held-out observations or superseded cases.
+    """
     from .publish import publish
-    config = read_json(project / "screening.json")
-    if not config or config.get("format") != FORMAT or config.get("scenario_sha256") != scenario_hash(s):
+    config = read_json(project / marker)
+    if not config or config.get("format") != fmt or config.get("scenario_sha256") != scenario_hash(s):
         raise ValueError("Unsupported or mismatched screening export configuration.")
+    site = config.get("site", "nowshera")
+    root = config.get("resroot", "nowshera")
     if file_hash(project / "computational-terrain.tif") != config["computational_terrain_sha256"]:
         raise ValueError("Computational terrain changed after preparation.")
     output = project / "output"
-    mass = np.loadtxt(output / "nowshera.mass", skiprows=1, ndmin=2)
-    sections = np.loadtxt(output / "nowshera.discharge", skiprows=3, ndmin=2)
+    mass = np.loadtxt(output / f"{root}.mass", skiprows=1, ndmin=2)
+    sections = np.loadtxt(output / f"{root}.discharge", skiprows=3, ndmin=2)
     duration = (s.time.end - s.time.start).total_seconds()
     warmup = config.get("warmup_seconds", 0)
     total_duration = duration + warmup
@@ -295,8 +303,8 @@ def finish_and_publish(s, project):
     relative_error = float(abs(mass[:, 10]).sum() / max(inflow_volume, 1))
     if relative_error > .001:
         raise ValueError(f"Numerical volume error {relative_error:.3%} exceeds the declared 0.1% screening tolerance.")
-    depth_paths = sorted(output.glob("nowshera-*.wd"))
-    wse_paths = sorted(output.glob("nowshera-*.elev"))
+    depth_paths = sorted(output.glob(f"{root}-*.wd"))
+    wse_paths = sorted(output.glob(f"{root}-*.elev"))
     if len(depth_paths) != expected or len(wse_paths) != expected:
         raise ValueError("Engine did not write every expected depth and WSE frame.")
     if file_hash(project / "channel-geometry.json") != config["channel_geometry_sha256"] or file_hash(project / "channel-mask.tif") != config["channel_mask_sha256"]:
@@ -334,14 +342,30 @@ def finish_and_publish(s, project):
         depth_name, wse_name = f"{len(frames):04d}-depth.tif", f"{len(frames):04d}-wse.tif"
         _tiff(rasters / depth_name, depths, affine, crs, "m")
         _tiff(rasters / wse_name, levels, affine, crs, "m EGM2008")
-        frames.append({"time": time.isoformat(), "depth": depth_name, "wse": wse_name})
+        frame = {"time": time.isoformat(), "depth": depth_name, "wse": wse_name}
+        if config.get("velocity"):
+            # Engine face velocities (voutput): Vx on x-faces (cols + 1), Vy on y-faces (rows + 1).
+            # Cell speed is the magnitude of the two face averages; dry cells read 0.
+            stem = depth_path.with_suffix("")
+            vx = np.loadtxt(stem.with_suffix(".Vx"), skiprows=6, ndmin=2)
+            vy = np.loadtxt(stem.with_suffix(".Vy"), skiprows=6, ndmin=2)
+            if vx.shape != (dims[0], dims[1] + 1) or vy.shape != (dims[0] + 1, dims[1]):
+                raise ValueError(f"Unexpected engine velocity grids in frame {index}.")
+            speed = np.hypot((vx[:, :-1] + vx[:, 1:]) / 2, (vy[:-1, :] + vy[1:, :]) / 2)
+            speed[depths <= 0] = 0
+            source_outputs += [{"path": path.relative_to(project).as_posix(), "sha256": file_hash(path)}
+                               for path in [stem.with_suffix(".Vx"), stem.with_suffix(".Vy")]]
+            frame["velocity"] = f"{len(frames):04d}-velocity.tif"
+            _tiff(rasters / frame["velocity"], speed, affine, crs, "m/s cell speed from engine face velocities")
+        frames.append(frame)
     if not max_depth > 0 or not max_wet_area > 0 or not np.any(mass[:, 8] > 0):
         raise ValueError("Model has no wet output or never reaches downstream outflow; inspect its domain and boundaries.")
     event_discharge = discharge.copy()
     event_discharge[:, 0] -= warmup
-    modeled = {float(row[0]): {"time": (s.time.start + timedelta(seconds=float(row[0]))).isoformat(), "station_id": "nowshera",
+    gauge_station = config.get("gauge", {}).get("station_id", "nowshera")
+    modeled = {float(row[0]): {"time": (s.time.start + timedelta(seconds=float(row[0]))).isoformat(), "station_id": gauge_station,
                "observed_m3s": "", "simulated_m3s": float(row[1])} for row in event_discharge if 0 <= row[0] <= duration}
-    for observed in _rows(STUDY / "nowshera-heldout-observations.csv"):
+    for observed in _rows(STUDY / "nowshera-heldout-observations.csv") if site == "nowshera" else []:
         if observed["split"] != "validation":
             continue
         time = datetime.fromisoformat(observed["time"])
@@ -356,7 +380,7 @@ def finish_and_publish(s, project):
         "relative_mass_error": relative_error, "declared_relative_mass_error_limit": .001, "maximum_depth_m": max_depth,
         "maximum_wet_area_m2_at_5cm": max_wet_area, "published_frames": len(frames), "engine_frames": expected,
         "engine_final_overshoot_seconds": float(mass[-1, 0] - total_duration), "first_published_time": frames[0]["time"], "last_published_time": frames[-1]["time"],
-        "source_mass_sha256": file_hash(output / "nowshera.mass"), "source_discharge_sha256": file_hash(output / "nowshera.discharge"),
+        "source_mass_sha256": file_hash(output / f"{root}.mass"), "source_discharge_sha256": file_hash(output / f"{root}.discharge"),
         "note": "Numerical execution and warm-up checks only, not real-world validation. Warm-up is excluded; event times equal native engine mass-record seconds minus the explicit initialization duration. No depth-only restart or nominal timestamp substitution."}
     write_json(project.parent / "numerical-review.json", numerical)
     manifest = {"scenario": s.model_dump(mode="json"), "engine": "LISFLOOD-FP", "terrain_sha256": config["source_terrain_sha256"],
@@ -364,15 +388,24 @@ def finish_and_publish(s, project):
         "provenance": {"model_run": f"LISFLOOD-FP 8.0.3 ACC external compute in {project}; configuration {scenario_hash(s)}",
             "classification": "exploratory channel-conditioned screening", "engine_sha256": config["engine_sha256"], "configuration": config,
             "numerical_review": numerical, "source_outputs": source_outputs,
-            "gauge_comparison": "Signed one-cell engine section fluxes summed across all grid rows, then linearly interpolated to eight held-out observation times. No extrapolation or calibration-period observations in skill scores."},
+            "gauge_comparison": config.get("gauge_comparison", "Signed one-cell engine section fluxes summed across all grid rows, then linearly interpolated to eight held-out observation times. No extrapolation or calibration-period observations in skill scores.")},
         "frames": frames, "gauges_csv": "hydrographs.csv"}
+    if config.get("validation_extent"):
+        # An observed extent on the model grid. "frame: last" compares it with the
+        # final (steady) frame at that frame's actual engine time.
+        spec = config["validation_extent"]
+        source = Path(spec["path"])
+        shutil.copy2(source, rasters / "observed-extent.tif")
+        time = frames[-1]["time"] if spec.get("frame") == "last" else spec["time"]
+        manifest["validation_extent"] = {"path": "observed-extent.tif", "time": time, "source": spec["source"],
+                                         "source_sha256": file_hash(source)}
     write_json(rasters / "export.json", manifest)
     result = publish(rasters / "export.json")
-    result["validation_status"] = "Exploratory channel-conditioned screening; warmed river, estimated bathymetry, no independent flood-extent validation"
+    result["validation_status"] = config.get("validation_status", "Exploratory channel-conditioned screening; warmed river, estimated bathymetry, no independent flood-extent validation")
     write_json(ROOT / "results" / result["id"] / "manifest.json", result)
     # Keep earlier files for comparison/audit, but offer the corrected prepared
     # case by default. Never rewrite the old scientific fields or metrics.
-    for previous in (ROOT / "results").glob("nowshera-public-screen-*/manifest.json"):
+    for previous in (ROOT / "results").glob("nowshera-public-screen-*/manifest.json") if site == "nowshera" else []:
         old = read_json(previous)
         if old["id"] != result["id"] and not old.get("superseded_by"):
             old.update(superseded_by=result["id"], superseded_reason="Replaced by the channel-conditioned case with a converged pre-event river warm-up; original outputs retained.")

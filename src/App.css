@@ -205,6 +205,10 @@
   color: #597480;
   margin: 0 3px;
 }
+.site-badge {
+  color: #d9c08a;
+  border-color: #6d5c3b;
+}
 .pilot-badge {
   margin-left: auto;
   font-size: 6px;
@@ -812,6 +816,153 @@
   margin-top: 14px;
   padding: 17px 16px;
   background: #14252b;
+}
+.impact-section {
+  border: 1px solid #4a3f2c;
+  border-radius: 6px;
+  margin-top: 14px;
+  padding: 17px 16px;
+  background: #1f2320;
+}
+.impact-subtitle {
+  margin-top: 18px;
+}
+.impact-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+.impact-cards > div {
+  background: #2a2a22;
+  border: 1px solid #4b4430;
+  border-radius: 4px;
+  padding: 11px 12px;
+  min-width: 0;
+}
+.impact-cards span {
+  display: block;
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: #b8a983;
+}
+.impact-cards strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+  margin: 6px 0 4px;
+  color: #f3d9a4;
+}
+.impact-cards small {
+  font-size: 7px;
+  color: #a99d80;
+}
+.facility-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 9px;
+  color: #dccfb2;
+}
+.facility-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.facility-list span {
+  margin-left: auto;
+  color: #ff8b7a;
+  white-space: nowrap;
+}
+.facility-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #ff4d4d;
+}
+.tributary-alert {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #ff9f43;
+  background: #2d2418;
+  font-size: 9px;
+  line-height: 1.7;
+  color: #e7d3b4;
+}
+.tributary-alert strong {
+  color: #ffb868;
+  font-weight: 500;
+}
+.tributary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8px;
+  color: #c4cfc6;
+  margin-bottom: 8px;
+}
+.tributary-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 6px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #8fa69d;
+  padding: 0 6px 6px 0;
+}
+.tributary-table td {
+  padding: 5px 6px 5px 0;
+  border-top: 1px solid #2f3b36;
+}
+.tributary-table tr.missing td:last-child {
+  color: #ffb868;
+}
+.map-keys {
+  position: absolute;
+  left: 12px;
+  bottom: 88px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  pointer-events: none;
+}
+.column-readout {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(10, 20, 26, 0.88);
+  font-size: 10px;
+  color: #e6ddd0;
+}
+.population-key {
+  flex-wrap: wrap;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(10, 20, 26, 0.82);
+  font-size: 8px;
+  color: #d8cdb6;
+}
+.population-key i {
+  width: 12px;
+  height: 5px;
+  border-radius: 1px;
+}
+@media (max-width: 640px) {
+  .impact-cards {
+    grid-template-columns: 1fr;
+  }
+  .tributary-table th:nth-child(3),
+  .tributary-table td:nth-child(3) {
+    display: none;
+  }
 }
 .network-cards {
   display: flex;
@@ -1932,4 +2083,449 @@
 }
 .geometry-roughness th:first-child {
   width: 50%;
+}
+
+/* Panels below the map: scenario setup, impact, hydrograph and network. */
+.dock {
+  margin-top: 14px;
+  border: 1px solid #2a4149;
+  border-radius: 6px;
+  background: #13222a;
+  min-width: 0;
+}
+.dock-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 6px;
+  border-bottom: 1px solid #2a4149;
+  overflow-x: auto;
+}
+.dock.collapsed .dock-tabs {
+  border-bottom: 0;
+}
+.dock-tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 11px 7px;
+  color: #8ea5ad;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.dock-tabs button.active {
+  color: #dcefe9;
+  border-bottom-color: #7de1bc;
+}
+.dock-tabs .dock-toggle {
+  margin-left: auto;
+  font-size: 10px;
+  color: #738d98;
+}
+.dock-panel {
+  padding: 12px;
+  min-width: 0;
+}
+.dock-panel > section,
+.dock-panel .setup-grid > section {
+  margin: 0;
+}
+.setup-grid .example-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.dock-tab {
+  display: flex;
+  align-items: stretch;
+}
+.dock-tabs .dock-close {
+  padding: 6px 6px 4px 0;
+  margin-left: -6px;
+  font-size: 13px;
+  color: #8ea5ad;
+}
+.dock-tabs .dock-close:hover {
+  color: #f0b4a4;
+}
+.runner-launch {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed #38564f;
+  border-radius: 8px;
+}
+.runner-launch p {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #8ea5ad;
+}
+
+/* Desktop: the whole lab fits one screen. Side columns scroll on their own,
+   the map takes the free height, and the panels below it scroll inside. */
+@media (min-width: 961px) and (min-height: 600px) {
+  .app-shell {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .app-header {
+    height: 50px;
+    flex: none;
+  }
+  .brand {
+    font-size: 17px;
+  }
+  .brand-mark {
+    width: 28px;
+    height: 29px;
+    font-size: 25px;
+    border-radius: 8px;
+  }
+  .brand small {
+    margin-top: 1px;
+  }
+  .workspace {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .station-panel,
+  .scenario-panel {
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 16px;
+  }
+  .main-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 18px;
+  }
+  .main-panel.lab {
+    overflow: hidden;
+  }
+  .main-head {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex: none;
+    margin-bottom: 8px;
+  }
+  .main-head .workspace-heading {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .workspace-heading h1 {
+    font-size: 18px;
+    margin: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .workspace-heading h1 span {
+    font-size: 13px;
+  }
+  .workspace-heading p {
+    margin: 0;
+  }
+  .main-head .pipeline {
+    flex: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  .lab-layout {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 12px;
+  }
+  .map-column {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .map-column > * {
+    flex: none;
+  }
+  .map-toolbar {
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .map-toolbar .result-picker {
+    flex: 1 1 340px;
+    min-width: 0;
+    margin: 0;
+    padding: 4px 6px;
+    gap: 6px;
+  }
+  .map-toolbar .result-picker > label {
+    font-size: 8px;
+  }
+  .map-toolbar .result-picker select {
+    padding: 4px 4px;
+  }
+  .map-column .globe-shell,
+  .map-column .map-loading {
+    flex: 1;
+    height: auto;
+    min-height: 160px;
+  }
+  .map-column .inline-note {
+    margin: 6px 0 0;
+    padding: 6px 10px;
+    line-height: 1.5;
+  }
+  .result-details {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 5px 10px;
+    gap: 4px 14px;
+  }
+  .map-footer .timebar {
+    padding: 6px 10px;
+  }
+  .map-footer .map-legend {
+    padding: 4px 1px;
+  }
+  .dock {
+    flex: none;
+    margin: 0;
+    width: clamp(330px, 27vw, 500px);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .dock-tabs {
+    flex-wrap: wrap;
+    flex: none;
+  }
+  .dock.collapsed {
+    width: auto;
+  }
+  .dock.collapsed .dock-tab {
+    display: none;
+  }
+  .dock.collapsed .dock-tabs .dock-toggle {
+    margin-left: 0;
+  }
+  .dock-panel:not([hidden]) {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .app-footer {
+    flex: none;
+    padding: 5px 20px;
+  }
+}
+@media (min-width: 961px) and (max-width: 1499px) and (min-height: 600px) {
+  .workspace {
+    grid-template-columns: 200px minmax(0, 1fr) 290px;
+  }
+  /* Step numbers only, except the current step, so the row never clips. */
+  .main-head .pipeline > div:not(.current) {
+    font-size: 0;
+    flex: none;
+  }
+  .main-head .pipeline {
+    justify-content: flex-end;
+    gap: 2px;
+  }
+}
+
+/* Simulation tab: impact, hydrograph and network as separate cards. */
+.live-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dock-panel.live-panel > section {
+  flex: none;
+}
+.impact-notes {
+  margin-top: 8px;
+}
+.impact-notes summary {
+  cursor: pointer;
+  font-size: 9px;
+  color: #8ea5ad;
+}
+.impact-notes .footnote {
+  margin: 6px 0 0;
+}
+@media (min-width: 961px) and (min-height: 600px) {
+  /* During playback the impact card scrolls inside its share of the column,
+     so the hydrograph and network stay in view below it. */
+  .live-panel .resizable-pane {
+    flex: 1 1 0;
+    min-height: 190px;
+    display: flex;
+    flex-direction: column;
+  }
+  .live-panel .resizable-pane.sized {
+    flex: none;
+    min-height: 0;
+  }
+  .live-panel .resizable-pane-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    border-radius: 6px;
+  }
+  .live-panel .resizable-pane.sized .resizable-pane-body {
+    flex: none;
+  }
+  .live-panel .hydrograph-section,
+  .live-panel .network-section,
+  .live-panel .impact-section {
+    padding: 10px 12px;
+  }
+  .live-panel .network-cards {
+    gap: 3px;
+    margin: 8px 0 4px;
+  }
+  .live-panel .network-cards > div {
+    padding: 6px 7px;
+  }
+  .live-panel .network-cards strong {
+    font-size: 9px;
+    line-height: 1.4;
+    margin: 4px 0;
+    overflow-wrap: anywhere;
+  }
+  .live-panel .network-cards small {
+    font-size: 6.5px;
+    line-height: 1.4;
+  }
+  .live-panel .network-arrow {
+    font-size: 11px;
+  }
+  .live-panel .network-section .footnote {
+    margin: 4px 0 0;
+    line-height: 1.5;
+  }
+  .live-panel .chart {
+    padding-top: 6px;
+  }
+  .live-panel .chart-empty {
+    height: 110px;
+  }
+}
+
+/* Scenario editor opens on demand; closed, the workspace has two columns. */
+.editor-slot:not([hidden]) {
+  display: contents;
+}
+.workspace.editor-closed {
+  grid-template-columns: 233px minmax(0, 1fr);
+}
+@media (min-width: 1500px) {
+  .workspace.editor-closed {
+    grid-template-columns: 255px minmax(0, 1fr);
+  }
+}
+@media (min-width: 961px) and (max-width: 1499px) {
+  .workspace.editor-closed {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+}
+@media (max-width: 960px) {
+  .workspace.editor-closed {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+}
+.editor-toggle {
+  flex: none;
+  margin-left: auto;
+  padding: 7px 11px;
+  border: 1px solid #41695b;
+  border-radius: 4px;
+  background: #183630;
+  color: #bce9d6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.editor-toggle.active {
+  background: #24493f;
+  border-color: #6aa58d;
+}
+.editor-close {
+  margin-left: 8px;
+  background: none;
+  border: 0;
+  color: #8da4ad;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.editor-close:hover {
+  color: #f0b4a4;
+}
+.scenario-panel .panel-label > span {
+  margin-left: auto;
+}
+
+/* Drag bar under a resizable pane. */
+.pane-splitter {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: 12px;
+  cursor: row-resize;
+  touch-action: none;
+  border-radius: 3px;
+}
+.pane-splitter i {
+  width: 38px;
+  height: 3px;
+  border-radius: 2px;
+  background: #4a6670;
+}
+.pane-splitter:hover i,
+.pane-splitter:focus-visible i {
+  background: #7de1bc;
+}
+.pane-splitter:focus-visible {
+  outline: 1px solid #7de1bc;
+}
+@media (max-width: 960px), (max-height: 599px) {
+  .pane-splitter {
+    display: none;
+  }
+}
+.resizable-pane-body > section {
+  margin: 0;
+}
+
+/* Observed 2022 flows card in the Simulation tab. */
+.observed-section {
+  border: 1px solid #2a4149;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #14232a;
+}
+.observed-section svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin-top: 6px;
+}
+.observed-section svg text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 9px;
+  fill: #8ea5ad;
+}
+.observed-section .chart-legend span {
+  font-size: 9px;
 }
